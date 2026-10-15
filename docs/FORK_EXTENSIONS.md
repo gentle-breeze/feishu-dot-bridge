@@ -179,4 +179,4 @@ or delivery. Startup does not request any additional Feishu permission automatic
 
 ## Scheduled review tasks
 
-See [scheduled review tasks](SCHEDULED_REVIEW_TASKS.md). This optional one-shot sidecar uses a separate version-1 database; Bridge remains schema 7. The socket adds owner/binding-scoped `request_status` lookup for reconciling lost submission receipts. No new MCP tools, subscriptions or automatic startup actions are added.
+See [scheduled review tasks](SCHEDULED_REVIEW_TASKS.md). This optional one-shot sidecar uses a separate version-1 database; Bridge remains schema 7. The socket adds owner/binding-scoped `request_status` lookup for reconciling lost submission receipts. Optional personal-owner configuration adds `run_scheduled_task` and `scheduled_task_status`; without it the catalog is unchanged. No subscriptions or automatic task startup actions are added.

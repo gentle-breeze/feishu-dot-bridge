@@ -6,6 +6,8 @@ import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
 import {schedulerConfigSchema,reviewPayload,localClock,boundedJson} from '../src/scheduled-review.js';
+import {handleMcp} from '../src/mcp.js';
+import {ScheduledTaskTools} from '../src/scheduled-task-tools.js';
 import {Scheduler,type TaskConfig} from '../src/scheduler.js';
 import {fixture} from './fixtures.js';
 import {startLocalSocket,localRequest} from '../src/local-socket.js';
@@ -80,4 +82,29 @@ test('one-shot CLI keeps disabled tasks inert and validates command arguments',(
  const tick=command('tick');assert.equal(tick.status,0);assert.equal(JSON.parse(tick.stdout)[0].state,'disabled');assert.equal(command('run','review').status,0);assert.equal(command('run').status,1);assert.equal(command('tick','extra').status,1);
  assert.equal(JSON.parse(command('status').stdout).length,0);
  }finally{f.close();}
+});
+
+test('Dot MCP tools are opt-in, owner/binding scoped and accept only configured task IDs',async()=>{
+ const f=setup(),b=fixture();try{const binding=b.bind();f.config.jobs[0]!.bindingId=binding.id;f.config.jobs[0]!.enabled=false;
+ let calls=0;const tools=new ScheduledTaskTools(b.bridge,b.alice.id,f.path,f.config,()=>NOW,async(_path,input)=>{calls++;const op=(input as {operation:string}).operation;return op==='binding'?{result:{bound:true,binding_id:binding.id}}:op==='request_status'?{result:{found:true,...queued}}:{result:queued};});
+ const call=async(name:string,args:unknown,p=b.alice,adapter:ScheduledTaskTools|null=tools,method='tools/call')=>{
+ const meta={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientInfo':{name:'MOCK-task-tools',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}};
+ const req=new Request('http://localhost/mcp',{method:'POST',headers:{'content-type':'application/json',accept:'application/json','MCP-Protocol-Version':'2026-07-28','Mcp-Method':method,...(method==='tools/call'?{'Mcp-Name':name}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params:{_meta:meta,...(method==='tools/call'?{name,arguments:args}:{})}})});
+ return (await handleMcp(req,b.bridge,p,'personal-tunnel',undefined,adapter??undefined)).json();};
+ const args={task_id:'review',binding_id:binding.id,existing_user_authorization:true};
+ const absent=await call('',{},b.alice,null,'tools/list');assert.equal(absent.result.tools.some((t:{name:string})=>t.name==='run_scheduled_task'),false);
+ const listed=await call('',{},b.alice,tools,'tools/list');assert.equal(listed.result.tools.filter((t:{name:string})=>t.name==='run_scheduled_task').length,1);
+ const disabled=await call('run_scheduled_task',args);assert.equal(JSON.parse(disabled.result.content[0].text).state,'disabled');assert.equal(calls,0);
+ for(const invalid of [{...args,command:'rm -rf /'},{...args,task_id:'unconfigured'},{...args,binding_id:'other'},{task_id:'review',binding_id:binding.id}])assert.equal((await call('run_scheduled_task',invalid)).result.isError,true);
+ assert.equal((await call('run_scheduled_task',args,b.bob)).result.isError,true);
+ assert.equal((await call('scheduled_task_status',{task_id:'review',binding_id:binding.id})).result.isError,undefined);
+ f.config.jobs[0]!.enabled=true;const run=await call('run_scheduled_task',args);assert.equal(JSON.parse(run.result.content[0].text).state,'queued');assert.equal(calls,2);
+ b.bridge.unlink(b.alice);assert.equal((await call('run_scheduled_task',args)).result.isError,true);assert.equal(calls,2);
+ }finally{b.store.close();f.close();}
+});
+test('Dot owner revocation during an await prevents subsequent socket submission',async()=>{
+ const f=setup(),b=fixture();try{const binding=b.bind();f.config.jobs[0]!.bindingId=binding.id;let submits=0;
+ const tools=new ScheduledTaskTools(b.bridge,b.alice.id,f.path,f.config,()=>NOW,async(_path,input)=>{if((input as {operation:string}).operation==='binding'){b.store.db.prepare('INSERT INTO revoked(owner) VALUES (?)').run(b.alice.id);return {result:{bound:true,binding_id:binding.id}};}submits++;return {result:queued};});
+ assert.equal((await tools.run(b.alice,{task_id:'review',binding_id:binding.id,existing_user_authorization:true})).state,'blocked');assert.equal(submits,0);
+ }finally{b.store.close();f.close();}
 });

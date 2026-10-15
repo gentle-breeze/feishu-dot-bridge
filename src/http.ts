@@ -1,3 +1,4 @@
+import type { ScheduledTaskTools } from './scheduled-task-tools.js';
 import { createServer, type Server } from 'node:http';
 import { Bridge } from './bridge.js';
 import { BridgeError, type FeishuApp, type Principal } from './types.js';
@@ -8,7 +9,7 @@ import { handleMcp } from './mcp.js';
 import type { MediaInputCandidate } from './media-input.js';
 export interface AppConfig { authMode: AuthMode; publicUrl: string; issuer?: string; apps: FeishuApp[]; allowedOrigins: string[] }
 export interface Authenticator { authenticate(header: string | null): Promise<Principal> }
-export function makeApp(config: AppConfig, bridge: Bridge, auth: Authenticator, media?: MediaInputCandidate) {
+export function makeApp(config: AppConfig, bridge: Bridge, auth: Authenticator, media?: MediaInputCandidate, tasks?:ScheduledTaskTools) {
   const resource = `${config.publicUrl}/mcp`, metadataUrl = `${config.publicUrl}/.well-known/oauth-protected-resource/mcp`;
   const json = (body: unknown, status = 200, extra: Record<string, string> = {}) => Response.json(body, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...extra } });
   return async (req: Request): Promise<Response> => {
@@ -21,7 +22,7 @@ export function makeApp(config: AppConfig, bridge: Bridge, auth: Authenticator, 
         if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { allow: 'POST' });
         const principal = await auth.authenticate(req.headers.get(config.authMode === 'personal-tunnel' ? PERSONAL_HEADER : 'authorization'));
         if (bridge.store.isRevoked(principal.id)) throw new BridgeError('unauthorized', 401);
-        return await handleMcp(req, bridge, principal, config.authMode, media);
+        return await handleMcp(req, bridge, principal, config.authMode, media, tasks);
       }
       const appId = /^\/feishu\/events\/([A-Za-z0-9_-]+)$/.exec(url.pathname)?.[1];
       if (appId && req.method === 'POST') {

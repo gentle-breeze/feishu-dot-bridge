@@ -18,13 +18,15 @@ Read-only inspection of the local commit-review implementation established:
   updates the comment timestamp. Reading does not instantiate ReviewStore (which
   would persist on opening), call the live HTTP service, or modify review data.
 - The project contains `.claude/skills/review-comments/SKILL.md`. This is a discovered
-  **candidate**, not a confirmed learning target. No source content, local paths,
-  real bindings or target selection are embedded in shipped configuration.
+  only discovered project skill. The user subsequently selected commit-review’s
+  skill, so the example targets this relative path and the verified GitHub origin
+  `gentle-breeze/commit-review`. It remains disabled; no real bindings or local
+  installation paths are embedded in shipped configuration.
 
 The operator must explicitly select the reviewed repositories and exact files;
-no directory crawling or automatic project expansion occurs at runtime. User
-confirmation of target repository/remote/allowed files, time and timezone is still
-needed before enabling. The example time is illustrative, not a chosen schedule.
+no directory crawling or automatic project expansion occurs at runtime. The requested schedule is **20:00 Asia/Shanghai daily**. The example reflects this
+selection and remains disabled. Resolve the real source paths, owner binding and
+existing approved subscription, and validate permissions before enabling.
 
 ## Configuration and commands
 
@@ -157,3 +159,35 @@ reconciliation require a separate reviewed Dot executor/result contract. Therefo
 successful queue/callback tests establish delivery only, not end-to-end skill updates.
 No live schedule, subscription, review disclosure, target modification or push to a
 skill repository has been performed by this implementation task.
+
+## Dot manual command (optional personal-only MCP tools)
+
+After authorized deployment, configure `TASK_CONFIG_FILE` and `TASK_DATABASE_PATH`
+with absolute private paths together with the existing `LOCAL_SOCKET_PATH`. Both
+variables are required; the configuration socket must equal the Bridge socket and
+the task DB must be separate. Startup loads configuration but does not run tasks or
+start a scheduler. Without these variables the existing tool catalog is unchanged.
+With them, two tools are exposed:
+
+```json
+{"name":"run_scheduled_task","arguments":{"task_id":"daily-review","binding_id":"VERIFIED_CURRENT_BINDING","existing_user_authorization":true}}
+{"name":"scheduled_task_status","arguments":{"task_id":"daily-review","binding_id":"VERIFIED_CURRENT_BINDING"}}
+```
+
+Dot can translate the user's request to manually run the daily review into the first
+tool. It cannot pass shell commands, source paths, parameters, a target, or a schedule.
+Only the configured personal installation owner and current matching binding may
+call it; unknown tasks, extra parameters, expired/revoked identity and changed
+bindings are rejected. The owner is rechecked before each socket operation. A
+boolean assertion is not a new permission grant; Dot must have existing user
+permission. Disabled tasks remain disabled even through the MCP tool. Manual
+execution shares the same daily idempotency slot as the timer and CLI.
+
+Enabling later requires an approved deployment of this branch, an existing owner-only
+Tunnel and local-event subscription, verified source/target paths and Git permissions,
+a private task configuration/database, and explicit activation of the task plus a
+host timer for `tick`. Config updates to the optional MCP adapter are loaded at Bridge
+startup, so coordinate an authorized restart when changing them; do not mutate a
+reserved daily task configuration. No such deployment, restart or activation has
+been performed here. The inspected target checkout was on a development branch;
+the scheduler does not switch it to main or modify it.

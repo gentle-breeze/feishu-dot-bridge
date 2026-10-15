@@ -1,3 +1,6 @@
+import { resolve } from 'node:path';
+import { ScheduledTaskTools } from './scheduled-task-tools.js';
+import { boundedJson, schedulerConfigSchema } from './scheduled-review.js';
 import { startLocalSocket } from './local-socket.js';
 import type { Server as LocalServer } from 'node:net';
 import { readFileSync } from 'node:fs';
@@ -42,7 +45,14 @@ const sender = new LarkSender(apps, feishuNetwork);
 const bridge = new Bridge(store, new SecretBox(Buffer.from(readConfiguredSecret(process.env, 'STORAGE_KEY'), 'base64')), transport, sender, Date.now, personal, diagnostic, {images:outputImagesEnabled});
 const mediaTransport = imagesEnabled ? new FeishuMediaTransport(apps, appId => sender.mediaAccessToken(appId), process.env) : undefined;
 const media = mediaTransport ? new MediaInputCandidate(bridge, mediaTransport, (_principal, _eventId, kind) => kind === 'image') : undefined;
-const app = makeApp({ authMode: runtime.mode, publicUrl: runtime.baseUrl, issuer: runtime.issuer, apps, allowedOrigins: (process.env.ALLOWED_ORIGINS ?? 'https://chatgpt.com').split(',') }, bridge, auth, media);
+let scheduledTasks:ScheduledTaskTools|undefined;
+if(process.env.TASK_CONFIG_FILE || process.env.TASK_DATABASE_PATH) {
+  if(!personal || !process.env.TASK_CONFIG_FILE || !process.env.TASK_DATABASE_PATH || !process.env.LOCAL_SOCKET_PATH)throw new BridgeError('tasks_require_personal_socket_and_explicit_configuration');
+  const taskConfig=schedulerConfigSchema.parse(boundedJson(process.env.TASK_CONFIG_FILE,65536,true));
+  if(taskConfig.socketPath!==process.env.LOCAL_SOCKET_PATH || resolve(process.env.TASK_DATABASE_PATH)===resolve(runtime.databasePath))throw new BridgeError('invalid_task_storage_or_socket');
+  scheduledTasks=new ScheduledTaskTools(bridge,personal.owner,process.env.TASK_DATABASE_PATH,taskConfig);
+}
+const app = makeApp({ authMode: runtime.mode, publicUrl: runtime.baseUrl, issuer: runtime.issuer, apps, allowedOrigins: (process.env.ALLOWED_ORIGINS ?? 'https://chatgpt.com').split(',') }, bridge, auth, media, scheduledTasks);
 const server = nodeServer(app, runtime.baseUrl, runtime.allowedHosts);
 const wsIngress = new FeishuWebSocketIngress(apps, message => media ? media.receiveAuthenticated(message) : bridge.receive(message), {
   mediaEnabled: imagesEnabled,
