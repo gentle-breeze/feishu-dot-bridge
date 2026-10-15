@@ -10,7 +10,7 @@ or invent a platform acknowledgement. An explicitly authorized `notice` on a cal
 
 Four authenticated tools use the existing protected MCP endpoint and recheck the
 complete current binding identity. No caller-selected owner or destination exists.
-The default catalog has 16 tools, including explicit status/output queries. Image input adds one tool; image output adds two separately enabled tools (17 input-only, 18 output-only, 19 with both). See [output delivery](OUTPUT_DELIVERY_CANDIDATE.md); statuses remain caller-submitted and do not approve dot permissions.
+The default catalog has 22 tools, including local events, explicit status/output queries and image input/output. Disable input with `FEISHU_MEDIA_INPUT=disabled` and output with `FEISHU_IMAGE_OUTPUT=off`: both disabled gives 19 tools, input-only 20 and output-only 21. See [output delivery](OUTPUT_DELIVERY_CANDIDATE.md); statuses remain caller-submitted and do not approve dot permissions.
 
 - `get_event_handling({event_id})`: read metadata, decision/revision, lease,
   callback acceptance and actual direct or covering reply state. No message text,

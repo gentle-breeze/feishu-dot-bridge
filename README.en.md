@@ -65,11 +65,11 @@ dot --MCP tools--> Official OpenAI Tunnel --loopback MCP--> bridge
 | Example | Required call and boundary |
 | --- | --- |
 | Text reply | `reply_to_feishu` sends an authorized reply to the original message |
-| Current generated image | A trusted adapter supplies actual bytes of the current user-requested image; opt-in output stages, uploads and sends it, with separate receipts. A private link is not an image delivery |
+| Current generated image | A trusted adapter supplies actual bytes of the current user-requested image; authorized output stages, uploads and sends it, with separate receipts. A private link is not an image delivery |
 | Progress update | Callers submit states explicitly; ordinary updates PATCH one card. Completion is not automatically inferred by observing dot |
 | Confirmation wait | An important wait sends a new card with action and reason. The button opens the official dot entry; the user confirms in the original Activity request. Feishu clicks grant no permission |
 
-Image input and output are separate opt-ins limited to bounded PNG/JPEG. Audio and transcription are unsupported. All outputs target the owner's current paired DM and require explicit authorization. This is a personal self-hosted bridge, not a shared hosted service.
+Image input and output default on with independent opt-outs, limited to bounded PNG/JPEG. Audio and transcription are unsupported. All outputs target the owner's current paired DM and require explicit authorization. This is a personal self-hosted bridge, not a shared hosted service.
 
 ## Before you start
 
