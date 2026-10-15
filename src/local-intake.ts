@@ -47,6 +47,13 @@ export class LocalIntake {
     }); return this.status(p,{event_id:id});
   }
   status(p:Principal,input:unknown) { const {e}=this.owned(p,localStatusSchema.parse(input).event_id); const reply=this.db.prepare('SELECT state,remoteMessageId FROM local_replies WHERE eventId=?').get(e.id); return {event_id:e.id,state:e.state,attempts:e.attempts,reply:reply??null}; }
+  requestStatus(p:Principal,input:unknown) {
+    const args=z.object({binding_id:id,request_id:id}).strict().parse(input),b=this.binding(p);
+    if(b.id!==args.binding_id)throw new BridgeError('binding_not_found',403);
+    const eventId='local_evt_'+hash(JSON.stringify([p.id,b.id,args.request_id]));
+    if(!this.db.prepare('SELECT 1 FROM local_events WHERE id=? AND owner=? AND bindingId=?').get(eventId,p.id,b.id))return {found:false};
+    return {found:true,...this.status(p,{event_id:eventId})};
+  }
   reply(p:Principal,input:unknown) {
     const args=localReplySchema.parse(input), {e}=this.owned(p,args.event_id);
     if(this.now()-e.createdAt>86400000) throw new BridgeError('local_event_expired');

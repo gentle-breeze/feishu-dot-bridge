@@ -134,3 +134,5 @@ The full suite requires Linux, `/usr/bin/prlimit`, `openssl` and `mkfifo`. macOS
 ## License
 
 Source is [MIT](LICENSE). Image dependencies and prebuilt native components have separate licenses. Review the [third-party terms and obligations](docs/DEPENDENCY_LICENSES.md) before distribution.
+
+See [disabled scheduled review tasks](docs/SCHEDULED_REVIEW_TASKS.md) for the daily/manual trigger, private durable state, bounded review context and current Dot execution limitations.

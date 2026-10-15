@@ -8,7 +8,8 @@ import { localSubmitSchema, localStatusSchema } from './local-intake.js';
 const requestSchema=z.discriminatedUnion('operation',[
   z.object({operation:z.literal('submit'),...localSubmitSchema.shape}).strict(),
   z.object({operation:z.literal('status'),...localStatusSchema.shape}).strict(),
-  z.object({operation:z.literal('binding')}).strict()
+  z.object({operation:z.literal('binding')}).strict(),
+  z.object({operation:z.literal('request_status'),binding_id:z.string().min(1).max(256),request_id:z.string().min(1).max(256)}).strict()
 ]);
 export function validateSocketPath(path:string,existing=false) {
   if(!isAbsolute(path) || Buffer.byteLength(path)>100 || realpathSync(dirname(path))!==dirname(path))throw new BridgeError('invalid_local_socket_path');
@@ -36,6 +37,7 @@ export async function startLocalSocket(path:string,bridge:Bridge,owner:string):P
         if(data.indexOf(10)!==data.length-1)throw new BridgeError('one_request_required');
         const args=requestSchema.parse(JSON.parse(data.toString('utf8'))),p={id:owner,expiresAt:Date.now()+3600000};let result;
         if(args.operation==='binding') result=bridge.status(p);
+        else if(args.operation==='request_status') result=bridge.local.requestStatus(p,{binding_id:args.binding_id,request_id:args.request_id});
         else if(args.operation==='submit') {const {operation,...input}=args;result=bridge.local.submit(p,input);}
         else result=bridge.local.status(p,{event_id:args.event_id});
         socket.end(JSON.stringify({result})+'\n');

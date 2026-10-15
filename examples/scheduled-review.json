@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "socketPath": "/absolute/private-directory/bridge.sock",
+  "jobs": [{
+    "id": "daily-review",
+    "type": "review-summary-v1",
+    "enabled": false,
+    "time": "18:00",
+    "timezone": "Etc/UTC",
+    "bindingId": "REPLACE_WITH_VERIFIED_OWNER_BINDING",
+    "authorizationReference": null,
+    "target": null,
+    "parameters": {
+      "sources": [{"file": "/absolute/commit-review/.reviews/REPLACE/comments.json", "repository": "/absolute/reviewed-repository"}],
+      "historyDays": 7,
+      "maxComments": 20
+    }
+  }]
+}

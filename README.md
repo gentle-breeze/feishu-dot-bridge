@@ -134,3 +134,5 @@ npm run demo
 ## 许可证
 
 源码采用 [MIT](LICENSE)。图片依赖与预编译原生组件另有许可证；分发前请核对[第三方许可与义务](docs/DEPENDENCY_LICENSES.md)。
+
+新增默认禁用的[定时 review 任务](docs/SCHEDULED_REVIEW_TASKS.md)：每日或手动触发、私有持久化状态、有界 review 上下文；Dot 执行结果回传与 skill 更新仍有明确限制。

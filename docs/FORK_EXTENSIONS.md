@@ -176,3 +176,7 @@ establish production end-to-end delivery.
 The official rendered pages were read without login or API debugging. These
 protocol checks and mocked SDK transports do not establish real permission grants
 or delivery. Startup does not request any additional Feishu permission automatically.
+
+## Scheduled review tasks
+
+See [scheduled review tasks](SCHEDULED_REVIEW_TASKS.md). This optional one-shot sidecar uses a separate version-1 database; Bridge remains schema 7. The socket adds owner/binding-scoped `request_status` lookup for reconciling lost submission receipts. No new MCP tools, subscriptions or automatic startup actions are added.
