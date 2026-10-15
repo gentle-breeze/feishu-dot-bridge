@@ -176,3 +176,18 @@ establish production end-to-end delivery.
 The official rendered pages were read without login or API debugging. These
 protocol checks and mocked SDK transports do not establish real permission grants
 or delivery. Startup does not request any additional Feishu permission automatically.
+
+## Default image capabilities
+
+Image input now defaults to `FEISHU_MEDIA_INPUT=images-v1` and image output to
+`FEISHU_IMAGE_OUTPUT=on`, including fresh personal/OAuth templates. Existing explicit
+`disabled` / `off` settings remain effective and are never rewritten. Disable both
+for text-only startup. The default catalog has 22 tools, or 19 with both disabled.
+No schema migration is needed for this default change. Roll back behavior by setting
+both opt-outs; do not downgrade the database.
+
+Decoder preflight, resource limits, per-operation authorization and owner binding
+remain unchanged. In particular, macOS strict policy still rejects image startup
+without a native memory hard limit. This change does not select the weaker macOS
+policy. It does not diagnose any previously observed unsupported-event or
+`get_event_image` error, or validate live Feishu permissions and artifact handoff.

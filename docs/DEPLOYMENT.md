@@ -58,14 +58,15 @@ node --env-file=.env dist/src/main.js
 
 `/healthz` 只表示进程存活。启动等待 WS `onReady`；终止性 SDK 错误会停止所有入口并非零退出，临时断线才由 SDK 重连。用主机已有的 systemd 等进程管理器监管 bridge 和 Tunnel，并验证重启策略；不要运行互相竞争的副本。
 
-可选图片模式：
+图片输入和输出默认开启；如需纯文字模式，在私有 `.env` 中显式关闭两项：
 
 ```sh
-# 写入私有 .env；缺省值为 disabled
-FEISHU_MEDIA_INPUT=images-v1
+# 显式关闭；缺省值分别为 images-v1 / on
+FEISHU_MEDIA_INPUT=disabled
+FEISHU_IMAGE_OUTPUT=off
 ```
 
-其他值均拒绝。此开关不代替图片处理/披露授权。启动前执行合成像素预检，缺少解码器或 Linux 资源限制即停止；详见 [图片输入](MEDIA_INPUT_CANDIDATE.md)。音频和转写不支持。
+输入只接受 `images-v1`/`disabled`，输出只接受 `on`/`off`，其他值均拒绝。这些开关不代替图片处理/披露授权。启动前执行合成像素预检，缺少解码器或所需资源限制即停止；macOS 默认仍因缺少原生内存硬限制而拒绝图片处理，详见[扩展说明](FORK_EXTENSIONS.md)；详见 [图片输入](MEDIA_INPUT_CANDIDATE.md)。音频和转写不支持。
 
 ## 5. 配置本人专属官方 Tunnel
 
@@ -88,7 +89,7 @@ Tunnel runtime key 和 `X-Bridge-Token` 是不同秘密。静态头只识别安�
 
 在产品支持的界面添加该 Tunnel。认证 “None” 表示不另走 OAuth，而非关闭后端密钥。实际账号须支持 MCP Events 组合；遇到不支持，停在具体兼容问题，不能改成无认证服务。
 
-核实实际可调用目录包含：`begin_binding`、`binding_status`、`unlink_binding`、`reply_to_feishu`、`delivery_status`、`list_pending_events`、`get_event`、`send_to_bound_feishu`、`mirror_delivery_status`、`get_event_handling`、`list_event_alerts`、`claim_event_processing`、`complete_event_handling`，以及 `submit_feishu_status`、`output_delivery_status`、`list_output_alerts`，默认共 16 个工具，以及 `feishu.message.created` 事件。`FEISHU_MEDIA_INPUT=images-v1` 增加 `get_event_image`（17 个）；`FEISHU_IMAGE_OUTPUT=on` 增加 `stage_generated_image_chunk` 和 `send_generated_image_to_feishu`（只开输出 18 个，全开 19 个）。输入／输出分别启用，仅支持受限 PNG/JPEG；卡片状态必须显式提交，不能自动捕获所有 dot 审批或通过飞书批准权限。启用输出前核实权限、Linux 解码器和实际字节交接，见[输出指南](OUTPUT_DELIVERY_CANDIDATE.md)。界面计数不能代替实际调用验证。
+核实实际可调用目录：默认 22 个工具，包含文字、绑定、状态、输出查询、本机事件工具，以及 `get_event_image`、`stage_generated_image_chunk` 和 `send_generated_image_to_feishu`。显式关闭两项图片能力后共 19 个，只开输入 20 个，只开输出 21 个。事件类型为 `feishu.message.created` 与独立的 `local.message.created`。仅支持受限 PNG/JPEG；卡片状态必须显式提交，不能自动捕获所有 dot 审批或通过飞书批准权限。实际图片使用前核实权限、解码器和字节交接，见[输出指南](OUTPUT_DELIVERY_CANDIDATE.md)。界面计数不能代替实际调用验证。
 
 让 dot 生成配对命令，由本人在五分钟内发到目标飞书机器人私聊，再检查绑定。其他人的私聊、机器人和群聊不会被路由给主人。随后明确授权订阅、回复范围和所需文字镜像；配对不是任意行动授权。
 

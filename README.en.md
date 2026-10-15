@@ -27,13 +27,13 @@ Connect your own Feishu bot DM to the dot you already use. Send a question from 
 | --- | --- |
 | Continue from Feishu | Receive text and rich posts in your paired bot DM and notify your existing dot; links in posts stay unopened |
 | Bring the answer back | Dot calls `reply_to_feishu` to reply to the original message; authorized ChatGPT text can also be sent as a source-labeled copy to the current paired DM |
-| Show dot an image | Opt-in PNG/JPEG input, including up to four new embedded post images, locally stripped of metadata and re-encoded |
-| Bring back a current generated image | Opt-in PNG/JPEG output: a trusted adapter supplies actual image bytes for upload and message delivery, with separate receipts |
+| Show dot an image | Default-on PNG/JPEG input, including up to four new embedded post images, locally stripped of metadata and re-encoded |
+| Bring back a current generated image | Default-on PNG/JPEG output: a trusted adapter supplies actual image bytes for upload and message delivery, with separate receipts |
 | Share task status | Explicit processing, confirmation wait, completion, failure or blocked cards; ordinary updates PATCH one card, important waits send a new card, and the button only opens the official dot entry |
 | See which inputs are handled | Per-event processing, approval waits, no-reply decisions and merged-reply coverage, alongside separate queue and API acceptance states |
 | Run on your own host | SQLite-backed inbox and delivery state with host process supervision; one owner, Feishu app and current DM binding per installation |
 
-The default catalog has **19 MCP tools**, including status submission and output queries. `FEISHU_MEDIA_INPUT=images-v1` adds `get_event_image`; `FEISHU_IMAGE_OUTPUT=on` adds two image staging/sending tools. Input alone gives 20 tools, output alone 21, and both enabled 22. Input and output are separate opt-ins limited to bounded PNG/JPEG. Image processing, disclosure and status sends still require explicit authorization. Audio and transcription are unsupported. The bridge does not automatically capture every dot answer or approval; clicking a Feishu card does not approve dot permissions.
+The default catalog has **22 MCP tools**, including image reading, staging and sending. Set `FEISHU_MEDIA_INPUT=disabled` to disable input and `FEISHU_IMAGE_OUTPUT=off` to disable output. Both disabled gives 19 tools, input alone 20, and output alone 21. Only bounded PNG/JPEG is supported. Processing, disclosure and sending still require authorization; enabling capabilities grants no app permissions. Decoder preflight and resource limits remain mandatory. macOS still refuses image processing by default without a native memory hard limit; see [extension notes](docs/FORK_EXTENSIONS.md). Audio and transcription are unsupported. The bridge does not automatically capture every dot answer or approval; clicking a Feishu card does not approve dot permissions.
 
 ## Architecture: two separate paths
 

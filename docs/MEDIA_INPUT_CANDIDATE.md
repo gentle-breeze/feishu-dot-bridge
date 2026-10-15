@@ -2,7 +2,7 @@
 
 > Fork additions: see [schema v7 maintenance and macOS image executor details](FORK_EXTENSIONS.md).
 
-Images are disabled by default. Set `FEISHU_MEDIA_INPUT=images-v1` only when image processing and disclosure through the existing private MCP connection are authorized. Missing/`disabled` keeps the 13-tool text interface; `images-v1` adds `get_event_image` and safe image metadata. Other values fail closed.
+Image input defaults to `FEISHU_MEDIA_INPUT=images-v1`; set `disabled` to opt out. Processing and disclosure through the existing private MCP connection still require authorization. Image output independently defaults to `FEISHU_IMAGE_OUTPUT=on`; set `off` to disable it. Both enabled exposes 22 tools; both disabled exposes 19. Unknown values fail closed, and all enabled image paths require decoder preflight and platform resource limits. macOS retains its default refusal without a native memory hard limit.
 
 The runtime supports PNG/JPEG images only. It has no audio decoder, transcription adapter, model runtime or outbound-media tool. Audio messages produce unsupported notices, without retaining audio references, downloading bytes or requesting a token for audio retrieval. A callback-backed unsupported notice can survive restart; polling-only audio uses the ordinary unsupported text and generic `media_not_available` metadata.
 

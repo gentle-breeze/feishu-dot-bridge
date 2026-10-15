@@ -6,7 +6,7 @@ import sharp from 'sharp';
 import { sanitizeImage } from '../src/media-image.js';
 import { inspectMedia } from '../src/media-policy.js';
 import { MediaInputCandidate } from '../src/media-input.js';
-import { mediaInputEnabled } from '../src/media-runtime.js';
+import { mediaInputEnabled, imageOutputEnabled } from '../src/media-runtime.js';
 import { makeApp, nodeServer } from '../src/http.js';
 import { authenticatedWebSocketMessageHandler } from '../src/feishu-websocket.js';
 import { BridgeError } from '../src/types.js';
@@ -39,8 +39,8 @@ test('sanitizer bounds output independently of compressed input', async () => {
   const bytes = await sharp(randomBytes(2000 * 2000 * 3), { raw: { width: 2000, height: 2000, channels: 3 } }).jpeg({ quality: 12 }).toBuffer();
   assert.ok(bytes.length < 4 * 1024 * 1024); await assert.rejects(sanitizeImage(bytes, 'image/jpeg', signal()), code('invalid_media_content'));
 });
-test('media deployment mode is default-off and fails closed on unrecognized values', () => {
-  assert.equal(mediaInputEnabled({}), false); assert.equal(mediaInputEnabled({ FEISHU_MEDIA_INPUT: 'disabled' }), false);
+test('media deployment mode is default-on and fails closed on unrecognized values', () => {
+  assert.equal(mediaInputEnabled({}), true); assert.equal(mediaInputEnabled({ FEISHU_MEDIA_INPUT: 'disabled' }), false);
   assert.equal(mediaInputEnabled({ FEISHU_MEDIA_INPUT: 'images-v1' }), true);
   for (const value of ['true', 'all', 'audio', '', 'images']) assert.throws(() => mediaInputEnabled({ FEISHU_MEDIA_INPUT: value }), code('invalid_media_mode'));
 });
@@ -163,4 +163,11 @@ test('activation fence rejects delayed historical media without downloading or r
     assert.equal(media.receiveAuthenticated(f.message({ messageId: 'om_old', timestamp: new Date(f.now() - 1).toISOString(), contentStatus: 'unsupported', mediaCandidate: { kind: 'image', resourceType: 'image', resourceKey: 'img_OLD' } })).media_state, 'media_before_activation');
     const event = f.bridge.listPendingEvents(f.alice).events[0]!; await assert.rejects(media.readImage(f.alice, { event_id: event.event_id }), code('media_not_available')); assert.equal(downloads, 0);
   } finally { media.close(); f.store.close(); }
+});
+
+test('image output defaults on, supports explicit off, and rejects unknown modes', () => {
+  assert.equal(imageOutputEnabled({}), true);
+  assert.equal(imageOutputEnabled({ FEISHU_IMAGE_OUTPUT: 'on' }), true);
+  assert.equal(imageOutputEnabled({ FEISHU_IMAGE_OUTPUT: 'off' }), false);
+  for (const value of ['', 'true', 'images-v1', 'ON', 'all']) assert.throws(() => imageOutputEnabled({ FEISHU_IMAGE_OUTPUT: value }), code('invalid_image_output_configuration'));
 });

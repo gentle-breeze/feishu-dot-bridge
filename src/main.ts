@@ -15,7 +15,7 @@ import { readConfiguredSecret } from './private-file.js';
 import { createFeishuNetwork } from './feishu-network.js';
 import { sanitizeRuntimeDiagnostic } from './runtime-diagnostics.js';
 import { BridgeError } from './types.js';
-import { mediaInputEnabled } from './media-runtime.js';
+import { mediaInputEnabled, imageOutputEnabled } from './media-runtime.js';
 import { MediaInputCandidate } from './media-input.js';
 import { FeishuMediaTransport } from './feishu-media-transport.js';
 import { verifyImageDecoder } from './media-image.js';
@@ -23,9 +23,7 @@ process.umask(0o077);
 function env(name: string): string { const v = process.env[name]; if (!v) throw new Error(`Missing ${name}`); return v; }
 // Reject experimental transport selection before reading credentials or opening data.
 const imagesEnabled = mediaInputEnabled(process.env);
-const outputImageMode=process.env.FEISHU_IMAGE_OUTPUT ?? 'off';
-if(!['off','on'].includes(outputImageMode)) throw new BridgeError('invalid_image_output_configuration');
-const outputImagesEnabled=outputImageMode==='on';
+const outputImagesEnabled = imageOutputEnabled(process.env);
 if (imagesEnabled || outputImagesEnabled) await verifyImageDecoder();
 const diagnostic = (value: unknown) => { const safe = sanitizeRuntimeDiagnostic(value); if (safe) console.log(JSON.stringify(safe)); };
 const transport = createCallbackTransport(process.env, hostname => console.warn(JSON.stringify({ event: 'callback_host_not_allowed', hostname })), value => diagnostic({ event: 'callback_transport', ...value }));

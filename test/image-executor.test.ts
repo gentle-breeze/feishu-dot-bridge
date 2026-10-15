@@ -17,6 +17,6 @@ test('macOS native launcher enforces CPU/file/fd limits and executes the real sy
 });
 
 test('macOS main rejects the default insufficient image boundary before reading configuration',{skip:process.platform!=='darwin'},()=>{
- const result=spawnSync(process.execPath,['dist/src/main.js'],{env:{PATH:process.env.PATH,FEISHU_MEDIA_INPUT:'images-v1'},encoding:'utf8'});
+ const result=spawnSync(process.execPath,['dist/src/main.js'],{env:{PATH:process.env.PATH},encoding:'utf8'});
  assert.equal(result.status,1);assert.match(result.stderr,/image_native_memory_limit_unavailable/);assert.doesNotMatch(result.stderr,/Missing|STORAGE_KEY|FEISHU_APP/);
 });

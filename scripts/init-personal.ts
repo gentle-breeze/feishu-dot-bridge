@@ -14,7 +14,10 @@ writeFileSync(resolve(config, 'feishu-app.json'), JSON.stringify({ appId: 'cli_0
 writeFileSync(resolve(root, '.env'), [
   'AUTH_MODE=personal-tunnel', `INSTALLATION_ID=${randomUUID()}`, 'HOST=127.0.0.1', 'PORT=3000',
   `BRIDGE_TOKEN_FILE=${tokenPath}`, `STORAGE_KEY_FILE=${storagePath}`, 'FEISHU_APP_FILE=./config/feishu-app.json',
-  'DATABASE_PATH=./data/personal.sqlite', 'CALLBACK_HOSTS=callback.invalid', 'FEISHU_APP_SECRET=', ''
+  'DATABASE_PATH=./data/personal.sqlite', 'CALLBACK_HOSTS=callback.invalid', 'FEISHU_APP_SECRET=',
+  '# Images default on; opt out with disabled / off. Authorization and decoder limits still apply.',
+  'FEISHU_MEDIA_INPUT=images-v1', 'FEISHU_IMAGE_OUTPUT=on',
+  '# macOS default policy refuses processing without a native memory hard limit.', ''
 ].join('\n'), { mode: 0o600, flag: 'wx' });
 console.log('Created private personal configuration. No secret values are displayed.');
 console.log('Fill the verified Feishu app/tenant and existing app credential locally. Verify exclusive WS ownership before enabling it.');

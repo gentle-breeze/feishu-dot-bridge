@@ -18,12 +18,17 @@ test('cloud transport requires explicit mode and the single approved callback ho
  for(const hosts of ['', 'evil.example',host+',evil.example','*',host+','+host])assert.throws(()=>createCallbackTransport({...proxyEnv,CALLBACK_HOSTS:hosts,CALLBACK_TRANSPORT:'managed-proxy-openai'}),/requires_exact/);
  assert.throws(()=>createCallbackTransport({CALLBACK_HOSTS:host,CALLBACK_TRANSPORT:'managed-proxy-openai'}),/managed_proxy_required/);
 });
-for (const images of [false, true]) for (const feishuTransport of ['default', 'managed-proxy']) test('actual main boots approved explicit cloud callback and '+feishuTransport+' SDK transport; images='+images+' with synthetic secrets only',async()=>{
+for (const mode of [
+ {name:'defaults', env:{}, input:true, output:true},
+ {name:'disabled', env:{FEISHU_MEDIA_INPUT:'disabled',FEISHU_IMAGE_OUTPUT:'off'}, input:false, output:false},
+ {name:'input-only', env:{FEISHU_IMAGE_OUTPUT:'off'}, input:true, output:false},
+ {name:'output-only', env:{FEISHU_MEDIA_INPUT:'disabled'}, input:false, output:true},
+]) for (const feishuTransport of ['default', 'managed-proxy']) test('actual main boots approved explicit cloud callback and '+feishuTransport+' SDK transport; images='+mode.name+' with synthetic secrets only',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'MOCK-cloud-main-'));const token=Buffer.alloc(32,17).toString('base64url');
  const probe=createServer();await new Promise<void>(r=>probe.listen(0,'127.0.0.1',r));const port=(probe.address() as {port:number}).port;await new Promise<void>(r=>probe.close(()=>r()));
  writeFileSync(join(dir,'token'),token,{mode:0o600});writeFileSync(join(dir,'storage'),Buffer.alloc(32,31).toString('base64'),{mode:0o600});
  writeFileSync(join(dir,'app.json'),JSON.stringify({appId:'cli_MOCK_CLOUD_ONLY',tenantKey:'MOCK_CLOUD_TENANT',appSecretEnv:'MOCK_APP_SECRET',encryptKeyEnv:'MOCK_ENCRYPT_KEY',verificationTokenEnv:'MOCK_VERIFY_TOKEN',ingress:'webhook'}),{mode:0o600});
- const child=spawn(process.execPath,[resolve('dist/src/main.js')],{cwd:dir,env:{PATH:process.env.PATH,...proxyEnv,FEISHU_TRANSPORT:feishuTransport,FEISHU_MEDIA_INPUT:images?'images-v1':'disabled',AUTH_MODE:'personal-tunnel',INSTALLATION_ID:'MOCK_cloud_runtime_approved',HOST:'127.0.0.1',PORT:String(port),BRIDGE_TOKEN_FILE:join(dir,'token'),STORAGE_KEY_FILE:join(dir,'storage'),FEISHU_APP_FILE:join(dir,'app.json'),DATABASE_PATH:join(dir,'personal.sqlite'),CALLBACK_HOSTS:host,CALLBACK_TRANSPORT:'managed-proxy-openai',MOCK_APP_SECRET:'SYNTHETIC_ONLY',MOCK_ENCRYPT_KEY:'SYNTHETIC_ONLY',MOCK_VERIFY_TOKEN:'SYNTHETIC_ONLY'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,[resolve('dist/src/main.js')],{cwd:dir,env:{PATH:process.env.PATH,...proxyEnv,FEISHU_TRANSPORT:feishuTransport,...mode.env,AUTH_MODE:'personal-tunnel',INSTALLATION_ID:'MOCK_cloud_runtime_approved',HOST:'127.0.0.1',PORT:String(port),BRIDGE_TOKEN_FILE:join(dir,'token'),STORAGE_KEY_FILE:join(dir,'storage'),FEISHU_APP_FILE:join(dir,'app.json'),DATABASE_PATH:join(dir,'personal.sqlite'),CALLBACK_HOSTS:host,CALLBACK_TRANSPORT:'managed-proxy-openai',MOCK_APP_SECRET:'SYNTHETIC_ONLY',MOCK_ENCRYPT_KEY:'SYNTHETIC_ONLY',MOCK_VERIFY_TOKEN:'SYNTHETIC_ONLY'},stdio:['ignore','pipe','pipe']});
  try{
   let output='';const ready=new Promise<void>((r,j)=>{child.stdout.on('data',b=>{output+=b.toString();if(output.includes('"bridge_started"'))r()});child.once('exit',()=>j(new Error('Cloud synthetic service exited before ready')))});
   const timer=setTimeout(()=>child.kill('SIGKILL'),5000);try{await ready}finally{clearTimeout(timer)}
@@ -31,7 +36,8 @@ for (const images of [false, true]) for (const feishuTransport of ['default', 'm
   assert.match(output,/"mode":"personal-tunnel"/);
   const protocolMeta={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientInfo':{name:'SYNTHETIC-MAIN',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}};
   const result=await (await fetch('http://127.0.0.1:'+port+'/mcp',{method:'POST',headers:{'content-type':'application/json',accept:'application/json,text/event-stream','MCP-Protocol-Version':'2026-07-28','Mcp-Method':'tools/list','X-Bridge-Token':token},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{_meta:protocolMeta}})})).json();
-  assert.equal(result.result.tools.length,images?20:19);assert.equal(result.result.tools.some((t:{name:string})=>t.name==='get_event_image'),images);
+  assert.equal(result.result.tools.length,19 + Number(mode.input) + 2 * Number(mode.output));assert.equal(result.result.tools.some((t:{name:string})=>t.name==='get_event_image'),mode.input);
+  for(const name of ['stage_generated_image_chunk','send_generated_image_to_feishu']) assert.equal(result.result.tools.some((t:{name:string})=>t.name===name),mode.output);
   child.kill('SIGTERM');const [code]=await once(child,'exit');assert.equal(code,0);
  }finally{if(child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await once(child,'exit')}rmSync(dir,{recursive:true,force:true})}
 });
