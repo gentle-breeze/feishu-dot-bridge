@@ -14,7 +14,7 @@ test('JWT requires signature, issuer, audience, subject, bounded expiry and scop
   for (const overrides of [{ iss: 'https://evil.example' }, { aud: 'other' }, { exp: now - 20 }, { exp: undefined }, { sub: undefined }, { iat: undefined }, { exp: now + 7200 }, { scope: 'other' }]) await assert.rejects(auth.authenticate(`Bearer ${await sign(overrides)}`), /unauthorized/);
   await assert.rejects(auth.authenticate(null)); await assert.rejects(auth.authenticate('Bearer alice')); await assert.rejects(auth.authenticate(`Bearer ${good.slice(0, -10)}corruption`));
 });
-test('callback SSRF blocks private, loopback, metadata, mapped IPv6, link-local and reserved networks', () => {
+test('address classifier identifies non-public ranges while callback URLs retain strict HTTPS host validation', () => {
   for (const ip of ['127.0.0.1','10.1.2.3','172.16.1.1','192.168.0.1','169.254.169.254','0.0.0.0','100.64.1.2','224.0.0.1','::1','fe80::1','fc00::1','::ffff:127.0.0.1','2001:db8::1']) assert.equal(isPublicAddress(ip), false, ip);
   assert.equal(isPublicAddress('8.8.8.8'), true); assert.equal(isPublicAddress('2606:4700:4700::1111'), true);
   for (const url of ['http://callback.example/x','https://evil.example/x','https://callback.example.evil/x','https://u:p@callback.example/x','https://callback.example:444/x','https://callback.example/x#fragment','https://127.0.0.1/x']) assert.throws(() => validateCallbackUrl(url, ['callback.example']));

@@ -1,3 +1,5 @@
+import { LocalIntake, LOCAL_EVENT } from './local-intake.js';
+import { CallbackReactions } from './callback-reactions.js';
 import { OutputDelivery, type OutputDecoder } from './output.js';
 import { EventHandling } from './event-handling.js';
 import { sanitizeReplyReceipt } from './reply-receipt.js';
@@ -5,7 +7,7 @@ import { classifyText } from './content-safety.js';
 import { mediaNoticeSchema, type MediaNotice } from './media-policy.js';
 import { Webhook } from 'standardwebhooks';
 import { z } from 'zod';
-import { hash, equal, randomToken, SecretBox } from './crypto.js';
+import { hash, equal, randomToken, SecretBox, validSecret } from './crypto.js';
 import { Store, type OwnedEventRow } from './store.js';
 import { BridgeError, type Principal, type Inbound, type Subscription, type CallbackTransport, type FeishuSender, type Binding, type Job, type MirrorJob, type ContentStatus } from './types.js';
 export const EVENT_NAME = 'feishu.message.created';
@@ -13,8 +15,8 @@ export type CallbackVerificationReason = 'request_failed' | 'over_budget' | 'htt
 export interface CallbackVerificationDiagnostic { event: 'callback_verification'; reason: CallbackVerificationReason; elapsedMs: number; httpStatus?: number }
 export const subscriptionArgs = z.object({ binding_id: z.string().min(1).max(256) }).strict();
 const deliverySchema = z.object({ mode: z.literal('webhook'), url: z.string().url().max(4096), secret: z.string().max(256) }).strict();
-export const subscribeSchema = z.object({ name: z.literal(EVENT_NAME), arguments: subscriptionArgs, delivery: deliverySchema, cursor: z.null().optional(), ttlMs: z.number().int().positive().nullable().optional(), _meta: z.record(z.string(), z.unknown()).optional() }).strict();
-export const unsubscribeSchema = z.object({ name: z.literal(EVENT_NAME), arguments: subscriptionArgs, delivery: deliverySchema.omit({ secret: true }), _meta: z.record(z.string(), z.unknown()).optional() }).strict();
+export const subscribeSchema = z.object({ name: z.enum([EVENT_NAME, LOCAL_EVENT]), arguments: subscriptionArgs, delivery: deliverySchema, cursor: z.null().optional(), ttlMs: z.number().int().positive().nullable().optional(), _meta: z.record(z.string(), z.unknown()).optional() }).strict();
+export const unsubscribeSchema = z.object({ name: z.enum([EVENT_NAME, LOCAL_EVENT]), arguments: subscriptionArgs, delivery: deliverySchema.omit({ secret: true }), _meta: z.record(z.string(), z.unknown()).optional() }).strict();
 export const listPendingEventsSchema = z.object({ limit: z.number().int().min(1).max(20).default(10), cursor: z.string().min(1).max(1024).optional() }).strict();
 export const getEventSchema = z.object({ event_id: z.string().min(1).max(256) }).strict();
 const eventWindowMs = 24 * 3600000, cursorLifetimeMs = 15 * 60000;
@@ -30,14 +32,16 @@ export const sendBoundSchema = z.object({ binding_id: z.string().min(1).max(256)
 export const mirrorStatusSchema = z.object({ sync_id: z.string().min(1).max(256) }).strict();
 const safeReplyStates = new Set(['pending', 'sending', 'sent', 'dead', 'cancelled', 'uncertain', 'blocked']);
 export const replySchema = z.object({ event_id: z.string().min(1).max(256), text: z.string().min(1).max(12000), handling_revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() }).strict();
-export function validSecret(secret: string): boolean { if (!/^whsec_[A-Za-z0-9+/]+={0,2}$/.test(secret)) return false; const b = Buffer.from(secret.slice(6), 'base64'); return b.length >= 24 && b.length <= 64 && b.toString('base64').replace(/=+$/, '') === secret.slice(6).replace(/=+$/, ''); }
+export { validSecret } from './crypto.js';
 export class Bridge {
+  readonly local: LocalIntake;
+  readonly reactions: CallbackReactions;
   readonly handling: EventHandling;
   readonly output: OutputDelivery;
   private pumping = false;
   private preferMirror = false;
   private preferOutput = true;
-  constructor(readonly store: Store, private box: SecretBox, private transport: CallbackTransport, private sender: FeishuSender, private now: () => number = Date.now, private personal?: { owner: string; appId: string; tenantKey: string }, private diagnostic?: (event: CallbackVerificationDiagnostic) => void | Promise<void>, outputOptions?:{images:boolean;decode?:OutputDecoder}) { if (personal) store.assertPersonalScope(personal.owner, personal.appId, personal.tenantKey); this.handling = new EventHandling(this,now); this.output = new OutputDelivery(this,box,sender,now,outputOptions?.decode,outputOptions?.images); }
+  constructor(readonly store: Store, private box: SecretBox, private transport: CallbackTransport, private sender: FeishuSender, private now: () => number = Date.now, private personal?: { owner: string; appId: string; tenantKey: string }, private diagnostic?: (event: CallbackVerificationDiagnostic) => void | Promise<void>, outputOptions?:{images:boolean;decode?:OutputDecoder}) { if (personal) store.assertPersonalScope(personal.owner, personal.appId, personal.tenantKey); this.local=new LocalIntake(this,box,transport,sender,now); this.reactions=new CallbackReactions(this,sender,now); this.handling = new EventHandling(this,now); this.output = new OutputDelivery(this,box,sender,now,outputOptions?.decode,outputOptions?.images); }
   private verificationDiagnostic(reason: CallbackVerificationReason, started: number, httpStatus?: number): void {
     const elapsedMs = Math.max(0, Math.min(60000, Math.floor(this.now() - started)));
     if (!Number.isFinite(elapsedMs)) return;
@@ -48,7 +52,7 @@ export class Bridge {
   private authorize(p: Principal) { if ((this.personal && p.id !== this.personal.owner) || p.expiresAt <= this.now() || this.store.isRevoked(p.id)) throw new BridgeError('unauthorized', 401); }
   beginBinding(p: Principal) { this.authorize(p); if (this.store.binding(p.id)) throw new BridgeError('already_bound_unlink_first'); const code = randomToken(); const expiresAt = Math.min(this.now() + 300000, p.expiresAt); this.store.transaction(() => { this.store.db.prepare('DELETE FROM pairs WHERE owner=? OR expiresAt<=?').run(p.id, this.now()); this.store.db.prepare('INSERT INTO pairs VALUES (?,?,?)').run(hash(code), p.id, expiresAt); }); return { command: `/bind ${code}`, expires_at: new Date(expiresAt).toISOString(), instruction: 'Send this command only in a private chat with the intended Feishu bot. Then check binding_status. Never share this code.' }; }
   status(p: Principal) { this.authorize(p); const b = this.store.binding(p.id); return b ? { bound: true, binding_id: b.id, app_id: b.appId, tenant_key: b.tenantKey, open_id: b.openId } : { bound: false }; }
-  unlink(p: Principal) { this.authorize(p); this.store.transaction(() => { this.store.db.prepare('UPDATE bindings SET active=0 WHERE owner=?').run(p.id); this.store.db.prepare('UPDATE subscriptions SET active=0 WHERE owner=?').run(p.id); this.store.db.prepare('DELETE FROM pairs WHERE owner=?').run(p.id); this.store.db.prepare("UPDATE output_outbox SET state='cancelled',payload='',failure='binding_unlinked' WHERE owner=? AND state='pending'").run(p.id); this.store.db.prepare('UPDATE output_media SET consumed=1 WHERE owner=?').run(p.id); this.store.db.prepare('DELETE FROM output_chunks WHERE mediaId IN (SELECT id FROM output_media WHERE owner=?)').run(p.id); this.store.db.prepare("UPDATE mirror_outbox SET state='cancelled' WHERE owner=? AND state='pending'").run(p.id); this.store.db.prepare("UPDATE jobs SET state='cancelled' WHERE inboxId IN (SELECT id FROM inbox WHERE owner=?) AND state='pending'").run(p.id); }); return { unlinked: true }; }
+  unlink(p: Principal) { this.authorize(p); this.store.transaction(() => { this.store.db.prepare('UPDATE bindings SET active=0 WHERE owner=?').run(p.id); this.store.db.prepare('UPDATE subscriptions SET active=0 WHERE owner=?').run(p.id); this.store.db.prepare('DELETE FROM pairs WHERE owner=?').run(p.id); this.store.cancelExtensions(p.id); this.store.db.prepare("UPDATE output_outbox SET state='cancelled',payload='',failure='binding_unlinked' WHERE owner=? AND state='pending'").run(p.id); this.store.db.prepare('UPDATE output_media SET consumed=1 WHERE owner=?').run(p.id); this.store.db.prepare('DELETE FROM output_chunks WHERE mediaId IN (SELECT id FROM output_media WHERE owner=?)').run(p.id); this.store.db.prepare("UPDATE mirror_outbox SET state='cancelled' WHERE owner=? AND state='pending'").run(p.id); this.store.db.prepare("UPDATE jobs SET state='cancelled' WHERE inboxId IN (SELECT id FROM inbox WHERE owner=?) AND state='pending'").run(p.id); }); return { unlinked: true }; }
   receive(m: Inbound, mediaNotice?: MediaNotice): { state: string } {
     const media = mediaNotice === undefined ? undefined : mediaNoticeSchema.parse(mediaNotice);
     if (this.personal && (m.appId !== this.personal.appId || m.tenantKey !== this.personal.tenantKey)) return { state: 'wrong_installation' };
@@ -88,7 +92,7 @@ export class Bridge {
   }
   private subId(owner: string, bindingId: string, url: string) { return `sub_${hash(JSON.stringify([owner, url, EVENT_NAME, { binding_id: bindingId }]))}`; }
   async subscribe(p: Principal, input: unknown) {
-    this.authorize(p); const args = subscribeSchema.parse(input); const binding = this.store.binding(p.id);
+    this.authorize(p); const args = subscribeSchema.parse(input); if(args.name===LOCAL_EVENT) return this.local.subscribe(p,args); const binding = this.store.binding(p.id);
     if (!binding || binding.id !== args.arguments.binding_id) throw new BridgeError('binding_not_found', 403);
     if (!validSecret(args.delivery.secret)) throw new BridgeError('invalid_signing_secret');
     const id = this.subId(p.id, binding.id, args.delivery.url), challenge = randomToken();
@@ -112,13 +116,13 @@ export class Bridge {
     });
     return { id, refreshBefore: new Date(expiresAt).toISOString(), cursor: null, truncated: false };
   }
-  unsubscribe(p: Principal, input: unknown) { this.authorize(p); const args = unsubscribeSchema.parse(input); const id = this.subId(p.id, args.arguments.binding_id, args.delivery.url); this.store.transaction(() => { this.store.db.prepare('UPDATE subscriptions SET active=0 WHERE id=? AND owner=?').run(id, p.id); this.store.db.prepare("UPDATE jobs SET state='cancelled' WHERE subscriptionId=? AND state='pending'").run(id); }); return {}; }
+  unsubscribe(p: Principal, input: unknown) { this.authorize(p); const args = unsubscribeSchema.parse(input); if(args.name===LOCAL_EVENT) return this.local.unsubscribe(p,args); const id = this.subId(p.id, args.arguments.binding_id, args.delivery.url); this.store.transaction(() => { this.store.db.prepare('UPDATE subscriptions SET active=0 WHERE id=? AND owner=?').run(id, p.id); this.store.db.prepare("UPDATE jobs SET state='cancelled' WHERE subscriptionId=? AND state='pending'").run(id); }); return {}; }
   reply(p: Principal, input: unknown) {
     this.authorize(p); const args = replySchema.parse(input);
     return this.store.transaction(() => {
       const inbox = this.store.inbox(args.event_id);
       if (!inbox || inbox.owner !== p.id || !this.store.bindingById(inbox.bindingId) || this.now() - Date.parse(inbox.timestamp) > 24 * 3600000) throw new BridgeError('event_not_found', 403);
-      const content = safeContent(args.text);
+      const content = { text: args.text, content_status: undefined };
       const id = `reply_${hash(args.event_id)}`, payload = JSON.stringify({ text: content.text }); const existing = this.store.job(id);
       if (existing) { if (existing.payload !== payload) throw new BridgeError('reply_already_reserved'); return { reply_id: id, state: existing.state, ...(content.content_status ? { content_status: content.content_status } : {}) }; }
       this.handling.assertReplyAllowed(inbox.id,args.handling_revision);
@@ -247,6 +251,8 @@ export class Bridge {
   async pump(limit = 100): Promise<number> {
     if (this.pumping) return 0; this.pumping = true; let processed = 0;
     try {
+      if (processed<limit && await this.reactions.pumpOne()) processed++;
+      if (processed<limit && await this.local.pumpOne()) processed++;
       while (processed < limit) {
         if (this.preferOutput && await this.output.pumpOne()) { processed++; this.preferOutput=false; continue; }
         // Alternate available lanes so continuous callbacks cannot starve bound sends.
@@ -266,13 +272,13 @@ export class Bridge {
             const body = JSON.parse(job.payload);
             if (typeof body?.data?.text !== 'string' || classifyText(body.data.text) === 'credential') { this.setState(job, 'blocked'); continue; }
             const response = await this.transport.post(sub.url, job.payload, this.signedHeaders(sub.id, inbox.id, job.payload, this.box.open(sub.secret), sub.oldSecret && sub.rotateUntil > this.now() ? this.box.open(sub.oldSecret) : undefined));
-            if (response.status >= 200 && response.status < 300) this.store.transaction(()=>{ this.setState(job,'sent'); this.store.db.prepare('UPDATE event_handling SET callbackAcceptedAt=COALESCE(callbackAcceptedAt,?) WHERE eventId=?').run(this.now(),inbox.id); });
+            if (response.status >= 200 && response.status < 300) this.store.transaction(()=>{ this.setState(job,'sent'); this.store.db.prepare('UPDATE event_handling SET callbackAcceptedAt=COALESCE(callbackAcceptedAt,?) WHERE eventId=?').run(this.now(),inbox.id); this.reactions.accepted(inbox.id); });
             else if (response.status === 410 || response.status === 413 || (response.status >= 400 && response.status < 500 && response.status !== 429)) { this.setState(job, 'dead'); if (response.status === 410) this.store.db.prepare('UPDATE subscriptions SET active=0 WHERE id=?').run(sub.id); }
             else this.retry(job);
           } else {
             // UUID length <=50; stable across retry and crash. Destination is NEVER supplied by a tool caller.
             const text = (JSON.parse(job.payload) as { text: string }).text;
-            if (typeof text !== 'string' || classifyText(text) === 'credential') { this.setState(job, 'blocked'); continue; }
+            if (typeof text !== 'string') { this.setState(job, 'blocked'); continue; }
             const rawReceipt = await this.sender.reply(inbox.appId, inbox.messageId, text, hash(job.id).slice(0, 32));
             acceptedReply = true;
             const receipt = sanitizeReplyReceipt(rawReceipt);

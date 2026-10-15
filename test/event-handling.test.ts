@@ -148,9 +148,9 @@ test('schema 3 upgrade seeds real reservations without inventing handling outcom
   const dir=mkdtempSync(join(tmpdir(),'MOCK-handling-migration-')),path=join(dir,'db.sqlite'),f=fixture(path);
   try{
     f.bind();const untouched=incoming(f,'untouched'),sent=incoming(f,'sent');f.bridge.reply(f.alice,{event_id:sent,text:'MOCK'});await f.bridge.pump();
-    const before=f.store.db.prepare('SELECT * FROM jobs').all();f.store.db.exec('DROP TABLE event_handling;PRAGMA user_version=3');f.store.close();
+    const before=f.store.db.prepare('SELECT * FROM jobs').all();f.store.db.exec('DROP TABLE callback_reactions;DROP TABLE local_replies;DROP TABLE local_events;DROP TABLE local_subscriptions;DROP TABLE event_handling;PRAGMA user_version=3');f.store.close();
     const s=new Store(path);try{
-      assert.equal(s.db.prepare('PRAGMA user_version').get()!.user_version,5);assert.deepEqual(s.db.prepare('SELECT * FROM jobs').all(),before);
+      assert.equal(s.db.prepare('PRAGMA user_version').get()!.user_version,7);assert.deepEqual(s.db.prepare('SELECT * FROM jobs').all(),before);
       const b=new Bridge(s,new SecretBox(f.storageKey),f.transport,f.sender,f.now);
       assert.equal(b.handling.status(f.alice,{event_id:untouched}).handling_state,'awaiting_processing');
       assert.equal(b.handling.status(f.alice,{event_id:sent}).handling_state,'reply_reserved');await b.pump();assert.equal(f.sent.length,1);

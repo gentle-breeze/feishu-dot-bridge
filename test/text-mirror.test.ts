@@ -68,7 +68,7 @@ test('ingress credentials and unsupported media retain only safe notices and exp
     assert.ok(!JSON.stringify(f.store.db.prepare('SELECT * FROM jobs').all()).includes('ThisIsNotARealCredential'));
     await f.bridge.pump(); const payloads = f.calls.filter(c => c.body.eventId); assert.equal(payloads.length, 3);
     assert.equal(payloads[1]!.body.data.content_status, 'unsupported'); assert.ok(!JSON.stringify(payloads).includes('DO_NOT_PARSE_MEDIA_BODY'));
-    f.bridge.reply(f.alice, { event_id: events[0]!.event_id, text: syntheticCredential }); await f.bridge.pump(); assert.equal(f.sent[0]!.text, OMITTED_CREDENTIAL_TEXT);
+    f.bridge.reply(f.alice, { event_id: events[0]!.event_id, text: syntheticCredential }); await f.bridge.pump(); assert.equal(f.sent[0]!.text, syntheticCredential);
   } finally { f.store.close(); }
 });
 test('rebind, revocation and identity tampering cancel pending work and never reroute an old generation', async () => {
@@ -130,9 +130,9 @@ test('additive v1 migration retains original events and recovers mirror crashes 
   const dir = mkdtempSync(join(tmpdir(), 'MOCK-mirror-')); const path = join(dir, 'db.sqlite'); const f = mirrorFixture(path);
   try {
     f.bridge.receive(f.message()); const event = f.bridge.listPendingEvents(f.alice, {}).events[0]!;
-    f.store.db.exec('DROP TABLE event_handling; DROP TABLE mirror_outbox; DROP TABLE content_dispositions; PRAGMA user_version=1'); f.store.close();
+    f.store.db.exec('DROP TABLE callback_reactions;DROP TABLE local_replies;DROP TABLE local_events;DROP TABLE local_subscriptions;DROP TABLE event_handling; DROP TABLE mirror_outbox; DROP TABLE content_dispositions; PRAGMA user_version=1'); f.store.close();
     const migrated = new Store(path); const bridge = new Bridge(migrated, new SecretBox(f.storageKey), f.transport, f.sender, f.now);
-    assert.equal(migrated.db.prepare('PRAGMA user_version').get()!.user_version, 5); assert.equal(bridge.getEvent(f.alice, { event_id: event.event_id }).text, f.message().text);
+    assert.equal(migrated.db.prepare('PRAGMA user_version').get()!.user_version, 7); assert.equal(bridge.getEvent(f.alice, { event_id: event.event_id }).text, f.message().text);
     const job = bridge.sendToBoundFeishu(f.alice, f.input()); migrated.db.prepare("UPDATE mirror_outbox SET state='sending',attempts=1,firstAttemptAt=? WHERE id=?").run(f.now(), job.sync_id); migrated.close();
     const recovered = new Store(path); try { const restarted = new Bridge(recovered, new SecretBox(f.storageKey), f.transport, f.sender, f.now); await restarted.pump(); assert.equal(f.deliveries.length, 1); assert.equal(f.deliveries[0]!.key, hash(job.sync_id).slice(0, 32)); assert.equal(recovered.mirrorJob(job.sync_id)!.attempts, 2); } finally { recovered.close(); }
     const future = new DatabaseSync(path); future.exec('PRAGMA user_version=99'); future.close(); assert.throws(() => new Store(path), /Unsupported database schema/);
@@ -155,12 +155,13 @@ test('authenticated decoder preserves exact pairing commands for one-use consump
     assert.equal(f.bridge.receive({ ...decoded.message, messageId: 'MOCK_replay' }).state, 'binding_rejected');
   } finally { f.store.close(); }
 });
-test('callback backlog cannot starve mirror sends and blocked reply reports its omission status', async () => {
+test('callback backlog cannot starve mirror sends and ordinary replies preserve exact text', async () => {
   const f = mirrorFixture(); try {
     await f.subscribe(); for (let i = 0; i < 4; i++) f.bridge.receive(f.message({ messageId: 'backlog_' + i }));
     f.bridge.sendToBoundFeishu(f.alice, f.input()); await f.bridge.pump(2); assert.equal(f.deliveries.length, 1);
     const event = f.bridge.listPendingEvents(f.alice, {}).events[0]!;
-    assert.equal(f.bridge.reply(f.alice, { event_id: event.event_id, text: syntheticCredential }).content_status, 'credential_blocked');
+    assert.equal(f.bridge.reply(f.alice, { event_id: event.event_id, text: syntheticCredential }).content_status, undefined);
+    await f.bridge.pump(); assert.equal(f.sent.at(-1)!.text,syntheticCredential);
   } finally { f.store.close(); }
 });
 test('same source ID is isolated across owners, and personal startup refuses foreign mirror jobs before recovery', async () => {

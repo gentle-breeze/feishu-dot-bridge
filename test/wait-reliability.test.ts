@@ -102,9 +102,9 @@ test('protected MCP exposes opt-in atomic notice schema without inventing platfo
  const f=setup();try{
  const app=makeApp({authMode:'oauth',publicUrl:'http://127.0.0.1',issuer:'https://MOCK.invalid',apps:[mockApp],allowedOrigins:[]},f.bridge,{async authenticate(){return f.alice;}});
  async function rpc(method:string,params:Record<string,unknown>){const response=await app(new Request('http://127.0.0.1/mcp',{method:'POST',headers:{'content-type':'application/json',accept:'application/json,text/event-stream','MCP-Protocol-Version':'2026-07-28','Mcp-Method':method,...(params.name?{'Mcp-Name':String(params.name)}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params:{...params,_meta:{'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientInfo':{name:'MOCK',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}}}})}));return (await response.json()).result;}
- const list=await rpc('tools/list',{});assert.equal(list.tools.length,16);const complete=list.tools.find((x:{name:string})=>x.name==='complete_event_handling');assert.match(JSON.stringify(complete.inputSchema),/notice/);assert.equal(complete.annotations.openWorldHint,true);
+ const list=await rpc('tools/list',{});assert.equal(list.tools.length,19);const complete=list.tools.find((x:{name:string})=>x.name==='complete_event_handling');assert.match(JSON.stringify(complete.inputSchema),/notice/);assert.equal(complete.annotations.openWorldHint,true);
  const result=await rpc('tools/call',{name:'complete_event_handling',arguments:f.decision});assert.equal(JSON.parse(result.content[0].text).waiting_notification.state,'pending');
- const events=await rpc('events/list',{});assert.deepEqual(events.events.map((e:{name:string})=>e.name),['feishu.message.created']);
+ const events=await rpc('events/list',{});assert.deepEqual(events.events.map((e:{name:string})=>e.name),['feishu.message.created','local.message.created']);
  }finally{f.store.close();}
 });
 test('Linux stability scenario: callback interruption, restart recovery, real PNG decode, text reply and card PATCH remain independent', {skip:process.platform!=='linux'},async()=>{

@@ -39,7 +39,9 @@ function synthetic() {
       .run(state, f.now() - 40 * DAY, f.now() - 39 * DAY, state === 'sent' ? 'om_MOCK_confirmed' : null, queued.sync_id);
     return { id: queued.sync_id, input };
   }
-  function downgrade(version: 1 | 2 | 3 | 4 | 5 = 1) {
+  function downgrade(version: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 1) {
+    if (version < 7) f.store.db.exec('DROP TABLE callback_reactions');
+    if (version < 6) f.store.db.exec('DROP TABLE local_replies; DROP TABLE local_events; DROP TABLE local_subscriptions');
     if (version < 5) f.store.db.exec('DROP TABLE output_chunks; DROP TABLE output_media; DROP TABLE output_outbox');
     if (version < 4) f.store.db.exec('DROP TABLE event_handling');
     if (version < 3) for (const name of ['remoteMessageId', 'rootMessageId', 'parentMessageId', 'threadId', 'completedAt']) f.store.db.exec('ALTER TABLE jobs DROP COLUMN ' + name);
@@ -58,7 +60,7 @@ function rows(path: string) {
 }
 function alter(path: string, sql: string) { const db = new DatabaseSync(path); try { db.exec(sql); } finally { db.close(); } }
 
-for (const version of [1, 2, 3, 4, 5] as const) test(`schema ${version}: scoped cleanup keeps outstanding work, receipts and boundary events; dry run matches execution`, () => {
+for (const version of [1, 2, 3, 4, 5, 6, 7] as const) test(`schema ${version}: scoped cleanup keeps outstanding work, receipts and boundary events; dry run matches execution`, () => {
   const f = synthetic();
   try {
     const removed = [f.inbox(), ...['sent', 'dead', 'cancelled', 'blocked'].map(s => f.inbox(s, version >= 2))];
@@ -175,7 +177,7 @@ test('schema 2: child-first FK ordering and any failure roll back all earlier de
   } finally { f.cleanup(); }
 });
 
-for (const version of [1, 2, 3, 4, 5] as const) test(`schema ${version}: revoke validates first, is atomic, and never recovers sending work`, () => {
+for (const version of [1, 2, 3, 4, 5, 6, 7] as const) test(`schema ${version}: revoke validates first, is atomic, and never recovers sending work`, () => {
   const f = synthetic(), owner = 'a'.repeat(64);
   try {
     f.inbox('sending'); if (version >= 2) { f.mirror('pending'); f.mirror('sending'); f.mirror('uncertain'); }
@@ -256,5 +258,20 @@ test('schema5 offline revoke closes live media atomically and retains dedupe tom
  assert.deepEqual(rows(f.path),before);
  runMaintenance(['revoke',owner],f.path,f.now());const after=rows(f.path);
  assert.equal((after.output_media as {consumed:number}[])[0]!.consumed,1);assert.equal((after.output_chunks as unknown[]).length,0);
+ }finally{f.cleanup();}
+});
+
+test('schema7 maintenance preserves local and reaction dedupe and revokes pending extensions',async()=>{
+ const f=synthetic(),owner='c'.repeat(64);try {
+  await f.bridge.subscribe(f.alice,{name:'local.message.created',arguments:{binding_id:f.binding.id},delivery:{mode:'webhook',url:'https://callback.example/local',secret:f.secret}});
+  const local=f.bridge.local.submit(f.alice,{binding_id:f.binding.id,request_id:'MOCK_local',text:'Synthetic local task'});
+  f.bridge.local.reply(f.alice,{event_id:local.event_id,text:'Synthetic reply',existing_user_authorization:true});
+  const event=f.inbox();f.store.db.prepare('UPDATE event_handling SET callbackAcceptedAt=? WHERE eventId=?').run(f.now(),event.id);f.bridge.reactions.accepted(event.id);
+  for(const table of ['bindings','local_subscriptions','local_events','inbox'])f.store.db.prepare(`UPDATE ${table} SET owner=?`).run(owner);
+  f.store.close();const before=rows(f.path);runMaintenance(['purge'],f.path,f.now());const after=rows(f.path);
+  for(const table of ['local_events','local_replies','local_subscriptions','callback_reactions','inbox'])assert.deepEqual(after[table],before[table]);
+  runMaintenance(['revoke',owner],f.path,f.now());const revoked=rows(f.path);
+  for(const table of ['local_events','local_replies','callback_reactions'])assert.equal((revoked[table] as {state:string}[])[0]!.state,'cancelled');
+  assert.equal((revoked.local_subscriptions as {active:number}[])[0]!.active,0);
  }finally{f.cleanup();}
 });

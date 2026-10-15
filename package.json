@@ -10,7 +10,8 @@
     "check": "npm test",
     "init:personal": "npm run build && node dist/scripts/init-personal.js",
     "test:proxy-candidate": "npm run build && node --test dist/test/proxy-candidate.test.js",
-    "check:cloud-egress": "npm run build && node dist/scripts/check-cloud-egress.js"
+    "check:cloud-egress": "npm run build && node dist/scripts/check-cloud-egress.js",
+    "build:image-executor:macos": "mkdir -p dist/native && cc -Wall -Wextra -Werror -O2 native/image-limit.c -o dist/native/image-limit"
   },
   "keywords": [],
   "license": "MIT",

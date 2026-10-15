@@ -122,7 +122,7 @@ test('restart turns sending into uncertain, retains metadata and never replays e
  const dir=mkdtempSync(join(tmpdir(),'bridge-output-')),path=join(dir,'synthetic.sqlite'),f=setup(path);
  try {
  const job=f.output.card(f.alice,f.card('crash'));f.store.db.prepare("UPDATE output_outbox SET state='sending',phase='sending_card',attempts=1 WHERE id=?").run(job.output_id);f.store.close();
- const reopened=new Store(path);try {assert.equal(reopened.db.prepare('PRAGMA user_version').get()!.user_version,5);const r=reopened.db.prepare('SELECT * FROM output_outbox').get()!;assert.equal(r.state,'uncertain');assert.equal(r.payload,'');assert.equal(r.failure,'restart_during_send');}finally{reopened.close();}
+ const reopened=new Store(path);try {assert.equal(reopened.db.prepare('PRAGMA user_version').get()!.user_version,7);const r=reopened.db.prepare('SELECT * FROM output_outbox').get()!;assert.equal(r.state,'uncertain');assert.equal(r.payload,'');assert.equal(r.failure,'restart_during_send');}finally{reopened.close();}
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 test('disabled media is absent from MCP discovery and direct calls fail closed',async()=>{
@@ -137,8 +137,8 @@ test('schema4 migration preserves handling and reply evidence and introduces an 
  const dir=mkdtempSync(join(tmpdir(),'bridge-output-migrate-')),path=join(dir,'synthetic.sqlite'),f=fixture(path);
  try {
  f.bind();f.bridge.receive(f.message());const before=f.store.db.prepare('SELECT * FROM event_handling').all();
- f.store.db.exec('DROP TABLE output_chunks; DROP TABLE output_media; DROP TABLE output_outbox; PRAGMA user_version=4');f.store.close();
- const upgraded=new Store(path);try{assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version,5);assert.deepEqual(upgraded.db.prepare('SELECT * FROM event_handling').all(),before);assert.equal(upgraded.db.prepare('SELECT COUNT(*) AS n FROM output_outbox').get()!.n,0);}finally{upgraded.close();}
+ f.store.db.exec('DROP TABLE callback_reactions;DROP TABLE local_replies;DROP TABLE local_events;DROP TABLE local_subscriptions;DROP TABLE output_chunks; DROP TABLE output_media; DROP TABLE output_outbox; PRAGMA user_version=4');f.store.close();
+ const upgraded=new Store(path);try{assert.equal(upgraded.db.prepare('PRAGMA user_version').get()!.user_version,7);assert.deepEqual(upgraded.db.prepare('SELECT * FROM event_handling').all(),before);assert.equal(upgraded.db.prepare('SELECT COUNT(*) AS n FROM output_outbox').get()!.n,0);}finally{upgraded.close();}
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 test('accepted card receipt persistence failure stays uncertain without a second network attempt',async()=>{
@@ -160,10 +160,10 @@ test('standard bridge worker pumps explicit status alongside original event/repl
  const ledger=f.store.db.prepare('SELECT state FROM event_handling').get()!;assert.equal(ledger.state,'awaiting_processing');
  }finally{f.store.close();}
 });
-test('runtime schema5 matches the exact offline maintenance schema',async()=>{
- const {DatabaseSync}=await import('node:sqlite'),{schema5}=await import('../scripts/maintenance-schema.js');const f=fixture(),reference=new DatabaseSync(':memory:');
+test('runtime schema7 matches the exact offline maintenance schema',async()=>{
+ const {DatabaseSync}=await import('node:sqlite'),{schema7}=await import('../scripts/maintenance-schema.js');const f=fixture(),reference=new DatabaseSync(':memory:');
  const description=(db:any)=>JSON.stringify(db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name").all().map((r:any)=>({...r,sql:String(r.sql).replace(/\bIF NOT EXISTS\s+/gi,'').replace(/\s+/g,' ').trim()})));
- try {reference.exec(schema5);assert.equal(description(f.store.db),description(reference));}finally{reference.close();f.store.close();}
+ try {reference.exec(schema7);assert.equal(description(f.store.db),description(reference));}finally{reference.close();f.store.close();}
 });
 
 test('unlink closes staged tombstones and immediately releases quota for a new binding',async()=>{

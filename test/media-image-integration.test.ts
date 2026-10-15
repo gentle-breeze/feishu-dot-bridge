@@ -55,7 +55,7 @@ test('signed ingress → source event notice → owned MCP read returns sanitize
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { ...params, _meta: meta } }) }));
   const call = async (name: string, args: unknown = {}) => (await (await rpc('tools/call', { name, arguments: args })).json()).result;
   try {
-    const catalog = (await (await rpc('tools/list')).json()).result.tools; assert.equal(catalog.length, 17);
+    const catalog = (await (await rpc('tools/list')).json()).result.tools; assert.equal(catalog.length, 20);
     const tool = catalog.find((x: any) => x.name === 'get_event_image'); assert.ok(tool); assert.equal(tool.inputSchema.additionalProperties, false); assert.equal(tool.annotations.readOnlyHint, true);
     const events = (await (await rpc('events/list')).json()).result.events; assert.ok(events[0].payloadSchema.properties.media);
     const payload = feishuPayload('', { type: 'image', messageId: 'om_image' }); payload.event.message.content = '{"image_key":"img_SYNTHETIC"}'; payload.event.message.create_time = String(f.now());

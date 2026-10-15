@@ -129,7 +129,7 @@ test('MCP image index is optional and strict while tool count includes explicit 
   const meta={'io.modelcontextprotocol/protocolVersion':'2026-07-28','io.modelcontextprotocol/clientInfo':{name:'MOCK-rich-post',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}};
   const rpc=async(method:string,params:Record<string,unknown>={})=>(await(await app(new Request('http://127.0.0.1/mcp',{method:'POST',headers:{'content-type':'application/json',accept:'application/json,text/event-stream','MCP-Protocol-Version':'2026-07-28','Mcp-Method':method,...(method==='tools/call'?{'Mcp-Name':String(params.name)}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params:{...params,_meta:meta}})}))).json()).result;
   try{
-    const catalog=(await rpc('tools/list')).tools;assert.equal(catalog.length,17);const tool=catalog.find((x:{name:string})=>x.name==='get_event_image');assert.deepEqual(tool.inputSchema.required,['event_id']);assert.equal(tool.inputSchema.properties.image_index.default,1);assert.equal(tool.inputSchema.properties.image_index.maximum,4);assert.equal(tool.inputSchema.additionalProperties,false);
+    const catalog=(await rpc('tools/list')).tools;assert.equal(catalog.length,20);const tool=catalog.find((x:{name:string})=>x.name==='get_event_image');assert.deepEqual(tool.inputSchema.required,['event_id']);assert.equal(tool.inputSchema.properties.image_index.default,1);assert.equal(tool.inputSchema.properties.image_index.maximum,4);assert.equal(tool.inputSchema.additionalProperties,false);
     const events=await rpc('events/list');assert.equal(events.events[0].payloadSchema.properties.media.properties.image_count.maximum,4);
   }finally{media.close();f.store.close();}
 });

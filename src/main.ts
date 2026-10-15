@@ -1,3 +1,5 @@
+import { startLocalSocket } from './local-socket.js';
+import type { Server as LocalServer } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { Store } from './store.js';
 import { Bridge } from './bridge.js';
@@ -34,6 +36,7 @@ const secret = (name: string) => readConfiguredSecret(process.env, name);
 const apps = runtime.mode === 'personal-tunnel' ? [loadPersonalFeishuApp(definition, secret)] : loadFeishuApps(definition, secret);
 const auth = runtime.personalAuth ?? new JwtAuthenticator(runtime.issuer!, `${runtime.baseUrl}/mcp`, runtime.jwksUrl!);
 const personal = runtime.personalAuth ? { owner: runtime.personalAuth.ownerId, appId: apps[0]!.appId, tenantKey: apps[0]!.tenantKey } : undefined;
+if(process.env.LOCAL_SOCKET_PATH && !personal) throw new BridgeError('local_socket_requires_personal_mode');
 const store = new Store(runtime.databasePath, personal);
 const sender = new LarkSender(apps, feishuNetwork);
 const bridge = new Bridge(store, new SecretBox(Buffer.from(readConfiguredSecret(process.env, 'STORAGE_KEY'), 'base64')), transport, sender, Date.now, personal, diagnostic, {images:outputImagesEnabled});
@@ -47,15 +50,17 @@ const wsIngress = new FeishuWebSocketIngress(apps, message => media ? media.rece
   notice: event => { console.log(JSON.stringify({ event })); diagnostic({ event: 'bridge_ws_lifecycle', state: event }); },
   onTerminalFailure: () => { console.error('{"event":"bridge_ingress_terminal_failure"}'); process.exitCode = 1; void shutdown(); }
 });
+let localServer:LocalServer|undefined;
 let timer: NodeJS.Timeout | undefined;
 let closing: Promise<void> | undefined;
 function shutdown(): Promise<void> {
   if (closing) return closing;
-  closing = (async () => { clearInterval(timer); wsIngress.stop(); media?.close(); mediaTransport?.close(); feishuNetwork?.close(); await new Promise<void>(resolve => server.close(() => resolve())); await bridge.waitForIdle(); transport.close?.(); store.close(); })();
+  closing = (async () => { clearInterval(timer); if(localServer) await new Promise<void>(resolve=>localServer!.close(()=>resolve())); wsIngress.stop(); media?.close(); mediaTransport?.close(); feishuNetwork?.close(); await new Promise<void>(resolve => server.close(() => resolve())); await bridge.waitForIdle(); transport.close?.(); store.close(); })();
   return closing;
 }
 process.on('SIGTERM', () => { void shutdown(); }); process.on('SIGINT', () => { void shutdown(); });
 try {
+  if(process.env.LOCAL_SOCKET_PATH) localServer=await startLocalSocket(process.env.LOCAL_SOCKET_PATH,bridge,personal!.owner);
   await wsIngress.start();
   if (!closing) {
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(runtime.port, runtime.host, resolve); });

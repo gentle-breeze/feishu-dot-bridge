@@ -1,5 +1,7 @@
 # Feishu ↔ dot
 
+> Fork policy and operations: [local intake, callback CheckMark, schema v7, platform image limits and explicit security changes](docs/FORK_EXTENSIONS.md). This fork differs from upstream; the linked policy supersedes older upstream descriptions below.
+
 ### Keep talking to your dot, from Feishu
 
 Connect your own Feishu bot DM to the dot you already use. Send a question from Feishu, let dot work on it, and bring an authorized text reply back to the original message. With image input enabled, dot can also view newly received PNG/JPEG images. Optional image output sends explicitly requested current generated images to the same paired DM; callers submit status cards explicitly.
@@ -31,7 +33,7 @@ Connect your own Feishu bot DM to the dot you already use. Send a question from 
 | See which inputs are handled | Per-event processing, approval waits, no-reply decisions and merged-reply coverage, alongside separate queue and API acceptance states |
 | Run on your own host | SQLite-backed inbox and delivery state with host process supervision; one owner, Feishu app and current DM binding per installation |
 
-The default catalog has **16 MCP tools**, including status submission and output queries. `FEISHU_MEDIA_INPUT=images-v1` adds `get_event_image`; `FEISHU_IMAGE_OUTPUT=on` adds two image staging/sending tools. Input alone gives 17 tools, output alone 18, and both enabled 19. Input and output are separate opt-ins limited to bounded PNG/JPEG. Image processing, disclosure and status sends still require explicit authorization. Audio and transcription are unsupported. The bridge does not automatically capture every dot answer or approval; clicking a Feishu card does not approve dot permissions.
+The default catalog has **19 MCP tools**, including status submission and output queries. `FEISHU_MEDIA_INPUT=images-v1` adds `get_event_image`; `FEISHU_IMAGE_OUTPUT=on` adds two image staging/sending tools. Input alone gives 20 tools, output alone 21, and both enabled 22. Input and output are separate opt-ins limited to bounded PNG/JPEG. Image processing, disclosure and status sends still require explicit authorization. Audio and transcription are unsupported. The bridge does not automatically capture every dot answer or approval; clicking a Feishu card does not approve dot permissions.
 
 ## Architecture: two separate paths
 
@@ -71,7 +73,7 @@ Image input and output are separate opt-ins limited to bounded PNG/JPEG. Audio a
 
 ## Before you start
 
-- **Host:** Linux/macOS, Node.js 24+, npm, persistent disk, process supervision and outbound HTTPS/WebSocket access. Image mode additionally needs Linux `/usr/bin/prlimit` and the pinned `sharp` dependencies.
+- **Host:** Linux/macOS, Node.js 24+, npm, persistent disk, process supervision and outbound HTTPS/WebSocket access. Image mode additionally needs Linux `/usr/bin/prlimit` or the compiled macOS resource limiter, plus the pinned `sharp` dependencies.
 - **Feishu:** your own app, verified app/tenant and private-message permissions. Use one event consumer per app and one bridge process per database.
 - **Dot:** an existing dot and an owner-only official OpenAI Tunnel. Your actual account must support the required MCP Events and Tunnel combination; check the [deployment requirements](docs/DEPLOYMENT.md#1-选择和检查主机).
 

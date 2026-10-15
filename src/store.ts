@@ -1,3 +1,4 @@
+import { localSchema, reactionSchema, invalidExtensionQueries, invalidReactionQueries } from './extension-schema.js';
 import { outputSchema, invalidOutputQueries } from './output-schema.js';
 import { handlingSchema, invalidHandlingQueries } from './handling-schema.js';
 import { DatabaseSync } from 'node:sqlite';
@@ -19,7 +20,7 @@ export class Store {
     this.db = new DatabaseSync(path);
     if (path !== ':memory:') chmodSync(path, 0o600);
     const schemaVersion = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
-    if (schemaVersion > 5) { this.db.close(); throw new Error('Unsupported database schema version'); }
+    if (schemaVersion > 7) { this.db.close(); throw new Error('Unsupported database schema version'); }
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS bindings (id TEXT PRIMARY KEY, owner TEXT NOT NULL, appId TEXT NOT NULL, tenantKey TEXT NOT NULL, openId TEXT NOT NULL, chatId TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
       CREATE UNIQUE INDEX IF NOT EXISTS binding_identity ON bindings(appId,tenantKey,openId) WHERE active=1;
@@ -59,13 +60,18 @@ export class Store {
         PRAGMA user_version=4;`);
     });
     if (schemaVersion < 5) this.transaction(() => { this.db.exec(outputSchema); this.db.exec('PRAGMA user_version=5'); });
+    if (schemaVersion < 6) this.transaction(() => { this.db.exec(localSchema); this.db.exec('PRAGMA user_version=6'); });
+    if (schemaVersion < 7) this.transaction(() => { this.db.exec(reactionSchema); this.db.exec('PRAGMA user_version=7'); });
+    if (personal) this.assertPersonalScope(personal.owner,personal.appId,personal.tenantKey);
     // A v4 ledger is durable evidence of waits/prohibitions. Missing rows must
     // never be recreated as unclaimed work and silently reopen those decisions.
     try {
-      for (const query of [...invalidHandlingQueries,...invalidOutputQueries]) {
+      if(this.db.prepare('PRAGMA foreign_key_check').get()) throw new Error('Malformed foreign key ledger');
+      for (const query of [...invalidHandlingQueries,...invalidOutputQueries,...invalidExtensionQueries,...invalidReactionQueries]) {
         if (this.db.prepare('SELECT 1 '+query+' LIMIT 1').get()) throw new Error('Malformed event handling ledger');
       }
     } catch (error) { this.db.close(); throw error; }
+    this.db.exec("UPDATE local_events SET state='pending' WHERE state='sending'; UPDATE local_replies SET state='uncertain' WHERE state='sending'; UPDATE callback_reactions SET state='uncertain' WHERE state='sending'");
     this.db.exec("UPDATE output_outbox SET state='uncertain',failure='restart_during_send',payload='' WHERE state='sending'");
     this.db.exec(`UPDATE mirror_outbox SET state='pending' WHERE state='sending'`);
     // A sending reply may already have been accepted, including when both the
@@ -104,7 +110,13 @@ export class Store {
       .all(...bindingScope(binding),after,limit) as {id:string;seq:number}[];
   }
   isRevoked(owner: string): boolean { return !!this.db.prepare('SELECT owner FROM revoked WHERE owner=?').get(owner); }
-  revoke(owner: string) { this.transaction(() => { this.db.prepare('INSERT OR IGNORE INTO revoked(owner) VALUES (?)').run(owner); this.db.prepare('UPDATE bindings SET active=0 WHERE owner=?').run(owner); this.db.prepare('UPDATE subscriptions SET active=0 WHERE owner=?').run(owner); this.db.prepare('DELETE FROM pairs WHERE owner=?').run(owner); this.db.prepare("UPDATE mirror_outbox SET state='cancelled' WHERE owner=? AND state='pending'").run(owner); this.db.prepare("UPDATE output_outbox SET state='cancelled',payload='',failure='account_revoked' WHERE owner=? AND state='pending'").run(owner); this.db.prepare('UPDATE output_media SET consumed=1 WHERE owner=?').run(owner); this.db.prepare('DELETE FROM output_chunks WHERE mediaId IN (SELECT id FROM output_media WHERE owner=?)').run(owner); }); }
+  revoke(owner: string) { this.transaction(() => { this.db.prepare('INSERT OR IGNORE INTO revoked(owner) VALUES (?)').run(owner); this.db.prepare('UPDATE bindings SET active=0 WHERE owner=?').run(owner); this.db.prepare('UPDATE subscriptions SET active=0 WHERE owner=?').run(owner); this.db.prepare('DELETE FROM pairs WHERE owner=?').run(owner); this.cancelExtensions(owner); this.db.prepare("UPDATE mirror_outbox SET state='cancelled' WHERE owner=? AND state='pending'").run(owner); this.db.prepare("UPDATE output_outbox SET state='cancelled',payload='',failure='account_revoked' WHERE owner=? AND state='pending'").run(owner); this.db.prepare('UPDATE output_media SET consumed=1 WHERE owner=?').run(owner); this.db.prepare('DELETE FROM output_chunks WHERE mediaId IN (SELECT id FROM output_media WHERE owner=?)').run(owner); }); }
+  cancelExtensions(owner:string) {
+    this.db.prepare('UPDATE local_subscriptions SET active=0 WHERE owner=?').run(owner);
+    this.db.prepare("UPDATE local_events SET state='cancelled' WHERE owner=? AND state='pending'").run(owner);
+    this.db.prepare("UPDATE local_replies SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM local_events WHERE owner=?)").run(owner);
+    this.db.prepare("UPDATE callback_reactions SET state='cancelled' WHERE state IN ('pending','uncertain') AND eventId IN (SELECT id FROM inbox WHERE owner=?)").run(owner);
+  }
   assertPersonalScope(owner: string, appId: string, tenantKey: string): void {
     for (const table of ['bindings', 'pairs', 'subscriptions', 'inbox', 'revoked']) {
       if (this.db.prepare(`SELECT 1 FROM ${table} WHERE owner != ? LIMIT 1`).get(owner)) throw new Error('Database contains another owner; use a separate personal database or an explicit reviewed migration');
@@ -115,7 +127,7 @@ export class Store {
     if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mirror_outbox'").get()) {
       if (this.db.prepare('SELECT 1 FROM mirror_outbox WHERE owner!=? OR appId!=? OR tenantKey!=? LIMIT 1').get(owner, appId, tenantKey)) throw new Error('Mirror outbox belongs to a different installation');
     }
-    for (const table of ['output_outbox','output_media']) if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
+    for (const table of ['output_outbox','output_media','local_events','local_subscriptions']) if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
       if (this.db.prepare(`SELECT 1 FROM ${table} o JOIN bindings b ON b.id=o.bindingId WHERE o.owner!=? OR b.appId!=? OR b.tenantKey!=? LIMIT 1`).get(owner,appId,tenantKey)) throw new Error('Output ledger belongs to a different installation');
     }
     const active = this.db.prepare('SELECT COUNT(*) AS n FROM subscriptions WHERE active=1 AND expiresAt>?').get(Date.now())!;

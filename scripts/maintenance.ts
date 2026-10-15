@@ -1,3 +1,4 @@
+import {invalidExtensionQueries,invalidReactionQueries} from '../src/extension-schema.js';
 import { invalidOutputQueries } from '../src/output-schema.js';
 import { invalidHandlingQueries } from '../src/handling-schema.js';
 /** Offline only. Stop every bridge worker first. This is not a full erasure tool. */
@@ -5,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { schema1, schema2, schema3, schema4, schema5 } from './maintenance-schema.js';
+import { schema1, schema2, schema3, schema4, schema5, schema6, schema7 } from './maintenance-schema.js';
 import { MaintenanceTarget } from './maintenance-target.js';
 
 type Request = { operation: 'purge' | 'revoke'; owner?: string; dryRun: boolean };
@@ -26,12 +27,12 @@ function schemaDescription(db: DatabaseSync): string {
     .map(row => ({ ...row, sql: String(row.sql).replace(/\bIF NOT EXISTS\s+/gi, '').replace(/\s+/g, ' ').trim() })));
 }
 
-function validate(db: DatabaseSync): 1 | 2 | 3 | 4 | 5 {
+function validate(db: DatabaseSync): 1 | 2 | 3 | 4 | 5 | 6 | 7 {
   const version = db.prepare('PRAGMA user_version').get()!.user_version;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) throw new Error('Unsupported database schema version; no changes made');
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7) throw new Error('Unsupported database schema version; no changes made');
   const reference = new DatabaseSync(':memory:');
   try {
-    reference.exec(version === 1 ? schema1 : version === 2 ? schema2 : version === 3 ? schema3 : version === 4 ? schema4 : schema5);
+    reference.exec(version === 1 ? schema1 : version === 2 ? schema2 : version === 3 ? schema3 : version === 4 ? schema4 : version === 5 ? schema5 : version === 6 ? schema6 : schema7);
     if (schemaDescription(db) !== schemaDescription(reference)) throw new Error('Unrecognized database schema; no changes made');
   } finally { reference.close(); }
   const integrity = db.prepare('PRAGMA quick_check').all();
@@ -56,15 +57,18 @@ function validate(db: DatabaseSync): 1 | 2 | 3 | 4 | 5 {
   invalid('FROM subscriptions s JOIN bindings b ON b.id=s.bindingId WHERE s.owner!=b.owner');
   if (version >= 4) for (const query of invalidHandlingQueries) invalid(query);
 
-  if (version === 5) for (const query of invalidOutputQueries) invalid(query);
+  if (version >= 5) for (const query of invalidOutputQueries) invalid(query);
+  if(version>=6) for(const query of invalidExtensionQueries) invalid(query);
+  if(version>=7) for(const query of invalidReactionQueries) invalid(query);
   return version;
 }
 
 // Keep all receipts: deleting an inbox body must not permit reingestion of its ID.
-function purgeSteps(version: 1 | 2 | 3 | 4 | 5, at: number) {
+function purgeSteps(version: 1 | 2 | 3 | 4 | 5 | 6 | 7, at: number) {
   const cutoff = at - 30 * 86400000;
   const eligible = `SELECT i.id FROM inbox i WHERE unixepoch(i.timestamp,'subsec')*1000<${cutoff}
     AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.inboxId=i.id AND j.state NOT IN (${terminal}))
+    ${version>=7 ? "AND NOT EXISTS (SELECT 1 FROM callback_reactions r WHERE r.eventId=i.id)" : ''}
     ${version >= 4 ? "AND EXISTS (SELECT 1 FROM event_handling h WHERE h.eventId=i.id AND h.state IN ('no_reply','reply_reserved','covered_by_reply'))" : ''}`;
   // Keep an anchor while any covered event is retained. Ledger rows cascade only with eligible inbox deletion; no unresolved decision is silently discarded.
   const inbox = version >= 4 ? `SELECT i.id FROM inbox i WHERE i.id IN (${eligible})
@@ -73,7 +77,7 @@ function purgeSteps(version: 1 | 2 | 3 | 4 | 5, at: number) {
     AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.subscriptionId=s.id AND j.inboxId NOT IN (${inbox}))`;
   return [
     ['pairs', `expiresAt<${at}`],
-    ...(version === 5 ? [['output_chunks', `mediaId IN (SELECT id FROM output_media WHERE expiresAt<=${at} OR consumed=1)`]] : []),
+    ...(version >= 5 ? [['output_chunks', `mediaId IN (SELECT id FROM output_media WHERE expiresAt<=${at} OR consumed=1)`]] : []),
     ...(version >= 2 ? [['content_dispositions', `eventId IN (${inbox})`]] : []),
     ['jobs', `inboxId IN (${inbox})`],
     ['inbox', `id IN (${inbox})`],
@@ -81,7 +85,8 @@ function purgeSteps(version: 1 | 2 | 3 | 4 | 5, at: number) {
     ['bindings', `active=0 AND NOT EXISTS (SELECT 1 FROM inbox i WHERE i.bindingId=bindings.id AND i.id NOT IN (${inbox}))
       AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.bindingId=bindings.id AND s.id NOT IN (${subscriptions}))
       ${version >= 2 ? 'AND NOT EXISTS (SELECT 1 FROM mirror_outbox m WHERE m.bindingId=bindings.id)' : ''}
-      ${version === 5 ? 'AND NOT EXISTS (SELECT 1 FROM output_outbox o WHERE o.bindingId=bindings.id) AND NOT EXISTS (SELECT 1 FROM output_media m WHERE m.bindingId=bindings.id)' : ''}`],
+      ${version >= 6 ? 'AND NOT EXISTS (SELECT 1 FROM local_events l WHERE l.bindingId=bindings.id) AND NOT EXISTS (SELECT 1 FROM local_subscriptions s WHERE s.bindingId=bindings.id)' : ''}
+      ${version >= 5 ? 'AND NOT EXISTS (SELECT 1 FROM output_outbox o WHERE o.bindingId=bindings.id) AND NOT EXISTS (SELECT 1 FROM output_media m WHERE m.bindingId=bindings.id)' : ''}`],
   ] as const;
 }
 
@@ -94,7 +99,13 @@ function perform(db: DatabaseSync, request: Request, at: number, apply: boolean,
       check(); db.prepare('UPDATE bindings SET active=0 WHERE owner=?').run(request.owner!);
       check(); db.prepare('UPDATE subscriptions SET active=0 WHERE owner=?').run(request.owner!);
       check(); db.prepare('DELETE FROM pairs WHERE owner=?').run(request.owner!);
-      if (version === 5) { check(); db.prepare("UPDATE output_outbox SET state='cancelled',payload='',failure='account_revoked' WHERE owner=? AND state='pending'").run(request.owner!); check(); db.prepare('UPDATE output_media SET consumed=1 WHERE owner=?').run(request.owner!); check(); db.prepare('DELETE FROM output_chunks WHERE mediaId IN (SELECT id FROM output_media WHERE owner=?)').run(request.owner!); }
+      if (version >= 5) { check(); db.prepare("UPDATE output_outbox SET state='cancelled',payload='',failure='account_revoked' WHERE owner=? AND state='pending'").run(request.owner!); check(); db.prepare('UPDATE output_media SET consumed=1 WHERE owner=?').run(request.owner!); check(); db.prepare('DELETE FROM output_chunks WHERE mediaId IN (SELECT id FROM output_media WHERE owner=?)').run(request.owner!); }
+      if(version>=6) {
+        db.prepare('UPDATE local_subscriptions SET active=0 WHERE owner=?').run(request.owner!);
+        db.prepare("UPDATE local_events SET state='cancelled' WHERE owner=? AND state='pending'").run(request.owner!);
+        db.prepare("UPDATE local_replies SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM local_events WHERE owner=?)").run(request.owner!);
+      }
+      if(version>=7) db.prepare("UPDATE callback_reactions SET state='cancelled' WHERE state IN ('pending','uncertain') AND eventId IN (SELECT id FROM inbox WHERE owner=?)").run(request.owner!);
       check(); if (version >= 2) db.prepare("UPDATE mirror_outbox SET state='cancelled' WHERE owner=? AND state='pending'").run(request.owner!);
     }
     return { event: apply ? 'account_revoked' : 'account_revoke_validated', schema_version: version, dry_run: !apply };

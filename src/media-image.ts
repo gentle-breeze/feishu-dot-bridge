@@ -1,3 +1,4 @@
+import { imageExecutor } from './image-executor.js';
 import { fork } from 'node:child_process';
 import { BridgeError } from './types.js';
 import { MEDIA_LIMITS, inspectMedia } from './media-policy.js';
@@ -19,9 +20,9 @@ export function sanitizeImage(bytes: Buffer, declaredMime: string, signal: Abort
   return new Promise((resolve, reject) => {
     let settled = false, diagnostics = 0;
     const child = fork(new URL('./media-image-worker.js', import.meta.url), [], {
-      // Mandatory Linux resource limiter: no unbounded fallback if unavailable.
+      // Mandatory platform resource limiter: no unbounded fallback if unavailable.
       // jitless avoids V8's large executable CodeRange reservation under RLIMIT_DATA.
-      execPath: '/usr/bin/prlimit', execArgv: ['--core=0', '--fsize=0', '--data=1073741824', '--cpu=8', '--nofile=64', '--', process.execPath, '--jitless', '--max-old-space-size=128'], serialization: 'advanced', silent: true,
+      ...imageExecutor(), serialization: 'advanced', silent: true,
       // Native random-access spill attempts must fail, never create blob files.
       env: { PATH: '/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: '/dev/null', TMP: '/dev/null', TEMP: '/dev/null', LANG: 'C', VIPS_CONCURRENCY: '1' }
     });

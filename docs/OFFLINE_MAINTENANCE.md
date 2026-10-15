@@ -1,5 +1,7 @@
 # Offline maintenance: eligible inbox-history cleanup
 
+> Fork additions: see [schema v7 maintenance and macOS image executor details](FORK_EXTENSIONS.md).
+
 **This maintenance command is Linux-only and requires `/proc/self/fd`.** There is no fallback on macOS, Windows or hosts without descriptor inspection. This restriction applies to maintenance, not to the bridge runtime.
 
 This command is administrator-only and offline-only. Stop **every** process that can open or send from this database first, including supervisors that could restart them. A successful SQLite write lock does not prove that a live worker has no remote request in flight. Make a consistent, private backup under your backup policy before an authorized write. Testing or publishing this code does not authorize operating on a user's database.

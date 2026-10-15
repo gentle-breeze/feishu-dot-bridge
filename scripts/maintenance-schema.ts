@@ -1,3 +1,4 @@
+import {localSchema,reactionSchema} from '../src/extension-schema.js';
 import { outputSchema } from '../src/output-schema.js';
 import { handlingSchema } from '../src/handling-schema.js';
 /** Exact supported offline schema descriptions, never executed against the target.
@@ -31,3 +32,6 @@ ALTER TABLE jobs ADD COLUMN completedAt INTEGER;
 export const schema4 = schema3 + handlingSchema;
 
 export const schema5 = schema4 + outputSchema;
+
+export const schema6 = schema5 + localSchema;
+export const schema7 = schema6 + reactionSchema;

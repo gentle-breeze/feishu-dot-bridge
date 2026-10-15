@@ -1,5 +1,7 @@
 # Feishu ↔ dot
 
+> Fork policy and operations: [local intake, callback CheckMark, schema v7, platform image limits and explicit security changes](docs/FORK_EXTENSIONS.md). This fork differs from upstream; the linked policy supersedes older upstream descriptions below.
+
 ### 在飞书里，接着和你的 dot 聊
 
 把自己的飞书机器人私聊，接到已经在用的 dot：从飞书发来问题，让 dot 处理，再把经你授权的文字回复送回原消息。开启图片输入后，也能把新收到的 PNG/JPEG 交给 dot 查看；开启图片输出后，可把明确要求的当前生成图片发回同一绑定私聊。状态卡片由调用者显式提交。
@@ -31,7 +33,7 @@
 | 看清哪些输入处理完了 | 逐事件记录处理中、等待授权、不回复及合并回复覆盖；分别查看排队、API 接受和不确定投递状态 |
 | 在自己的主机运行 | 本地 SQLite 保存收件和投递状态，配合主机进程监管；一套安装、一个主人、一个飞书应用与当前私聊绑定 |
 
-默认有 **16 个 MCP 工具**，包括状态提交与输出查询。`FEISHU_MEDIA_INPUT=images-v1` 增加 `get_event_image`；`FEISHU_IMAGE_OUTPUT=on` 增加图片分块暂存与发送两个工具。只开输入共 17 个，只开输出共 18 个，两者全开共 19 个。输入和输出分别启用，仅支持受限 PNG/JPEG；图片处理、披露与状态发送仍需明确授权。不支持语音或转写，也不会自动捕获所有 dot 回复或审批；飞书卡片点击不批准 dot 权限。
+默认有 **19 个 MCP 工具**，包括状态提交与输出查询。`FEISHU_MEDIA_INPUT=images-v1` 增加 `get_event_image`；`FEISHU_IMAGE_OUTPUT=on` 增加图片分块暂存与发送两个工具。只开输入共 20 个，只开输出共 21 个，两者全开共 22 个。输入和输出分别启用，仅支持受限 PNG/JPEG；图片处理、披露与状态发送仍需明确授权。不支持语音或转写，也不会自动捕获所有 dot 回复或审批；飞书卡片点击不批准 dot 权限。
 
 ## 架构：两条独立通路
 
@@ -71,7 +73,7 @@ dot --MCP tools--> Official OpenAI Tunnel --loopback MCP--> bridge
 
 ## 开始前准备好
 
-- **主机：** Linux/macOS、Node.js 24+、npm，以及持久磁盘、进程监管和必要的出站 HTTPS/WebSocket 连通性。图片模式另需 Linux `/usr/bin/prlimit` 和锁定的 `sharp` 依赖。
+- **主机：** Linux/macOS、Node.js 24+、npm，以及持久磁盘、进程监管和必要的出站 HTTPS/WebSocket 连通性。图片模式需 Linux `/usr/bin/prlimit`，或 macOS 编译后的受限执行器，以及锁定的 `sharp` 依赖。
 - **飞书：** 你自己的应用、已核实的 app/tenant 和私聊收发权限；同一应用只能有一个事件消费者，每个数据库只能有一个 bridge 进程。
 - **dot：** 已有 dot 和仅本人可用的官方 OpenAI Tunnel；实际账号须支持所需的 MCP Events 与 Tunnel 组合，请先核对[部署要求](docs/DEPLOYMENT.md#1-选择和检查主机)。
 

@@ -8,7 +8,7 @@ export function validateCallbackUrl(raw: string, hosts: string[]): URL {
   if (url.protocol !== 'https:' || url.username || url.password || url.hash || (url.port && url.port !== '443') || !hosts.includes(url.hostname) || ipaddr.isValid(url.hostname.replace(/^\[|\]$/g, ''))) throw new BridgeError('invalid_callback');
   return url;
 }
-/** DNS is resolved and checked for EVERY request, then pinned into the TLS connection.
+/** DNS is resolved for EVERY request, then pinned into the TLS connection.
  * No redirect following, proxy, ambient cookies, auth forwarding, or arbitrary fetch hook in production. */
 export class PublicHttpsCallback implements CallbackTransport {
   constructor(private allowedHosts: string[], private onBlockedHost?: (hostname: string) => void) { if (!allowedHosts.length) throw new Error('CALLBACK_HOSTS must be configured'); }
@@ -19,7 +19,9 @@ export class PublicHttpsCallback implements CallbackTransport {
     const started = Date.now();
     let timer: NodeJS.Timeout | undefined;
     const addresses = await Promise.race([lookup(url.hostname, { all: true, verbatim: true }), new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new BridgeError('callback_dns_timeout')), 5000); })]).finally(() => { clearTimeout(timer); });
-    if (!addresses.length || addresses.some(a => !isPublicAddress(a.address))) throw new BridgeError('blocked_callback_address');
+    // Explicit fork policy: allowlisted HTTPS names may resolve to private addresses.
+    // TLS hostname/certificate verification and DNS pinning remain mandatory.
+    if (!addresses.length) throw new BridgeError('callback_dns_empty');
     const pinned = addresses[0]!;
     return new Promise((resolve, reject) => {
       const req = request(url, { method: 'POST', agent: false, servername: url.hostname, rejectUnauthorized: true,

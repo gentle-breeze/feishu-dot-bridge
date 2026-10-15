@@ -84,6 +84,25 @@ export class LarkSender implements FeishuSender {
   }
   private outputClient(appId:string) { const client=this.clients.get(appId); if(!client) throw new BridgeError('unknown_app'); return client; }
   private outputCode(code:unknown) { if(code===0) return; if(typeof code==='number' && Number.isFinite(code)) throw new BridgeError('feishu_output_rejected',502); throw new BridgeError('invalid_output_receipt',502); }
+  async findCheckMark(appId:string,messageId:string):Promise<string|undefined> {
+    let token:string|undefined;
+    for(let page=0;page<10;page++) {
+      const r=await this.outputClient(appId).im.messageReaction.list({path:{message_id:messageId},params:{reaction_type:'CheckMark',page_size:100,page_token:token}});
+      if(r.code!==0 || !r.data) throw new BridgeError('reaction_lookup_failed');
+      const own=r.data.items.find(x=>x.operator?.operator_type==='app' && x.operator.operator_id===appId && x.reaction_type?.emoji_type==='CheckMark');
+      if(own?.reaction_id)return own.reaction_id;
+      if(!r.data.has_more)return undefined;
+      if(!r.data.page_token || r.data.page_token===token)throw new BridgeError('reaction_lookup_incomplete');
+      token=r.data.page_token;
+    }
+    throw new BridgeError('reaction_lookup_incomplete');
+  }
+  async addCheckMark(appId:string,messageId:string):Promise<string> {
+    const r=await this.outputClient(appId).im.messageReaction.create({path:{message_id:messageId},data:{reaction_type:{emoji_type:'CheckMark'}}});
+    if(typeof r.code==='number' && r.code!==0)throw new BridgeError('reaction_rejected');
+    if(r.code!==0 || !r.data?.reaction_id)throw new BridgeError('reaction_receipt_invalid');
+    return r.data.reaction_id;
+  }
   async uploadImage(appId:string, bytes:Buffer):Promise<string> {
     if(!bytes.length || bytes.length>4*1024*1024) throw new BridgeError('media_size_exceeded');
     // Official SDK builds multipart/form-data; Buffer only, never a ReadStream/path.
@@ -112,6 +131,7 @@ export class LarkSender implements FeishuSender {
   async sendBound(appId: string, chatId: string, text: string, idempotencyKey: string): Promise<string> {
     const client = this.clients.get(appId); if (!client) throw new BridgeError('unknown_app');
     const result = await client.im.message.create({ params: { receive_id_type: 'chat_id' }, data: { receive_id: chatId, content: JSON.stringify({ text }), msg_type: 'text', uuid: idempotencyKey } });
+    if (typeof result?.code==='number' && result.code!==0) throw new BridgeError('feishu_send_rejected',502);
     if (result?.code !== 0 || !result.data?.message_id) throw new BridgeError('feishu_send_failed', 502);
     return result.data.message_id;
   }
