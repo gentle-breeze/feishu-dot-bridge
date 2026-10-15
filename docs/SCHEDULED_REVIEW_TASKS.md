@@ -24,8 +24,9 @@ Read-only inspection of the local commit-review implementation established:
   installation paths are embedded in shipped configuration.
 
 The operator must explicitly select the reviewed repositories and exact files;
-no directory crawling or automatic project expansion occurs at runtime. The requested schedule is **20:00 Asia/Shanghai daily**. The example reflects this
-selection and remains disabled. Resolve the real source paths, owner binding and
+no directory crawling or automatic project expansion occurs at runtime. The latest user requirement is to read each task’s time and timezone from configuration,
+not to fix a 20:00 schedule. **20:00 Asia/Shanghai is only a disabled example**, not
+an enabled or committed real schedule. Resolve the real source paths, owner binding and
 existing approved subscription, and validate permissions before enabling.
 
 ## Configuration and commands
@@ -36,6 +37,10 @@ The scheduler database must be a separate **0600** file in a canonical same-owne
 0700 directory with trusted ancestors. It is created on first stateful command.
 Do not point it at a Bridge/review database. Unknown databases and schema versions
 are rejected. Configuration paths must be absolute; symlinks are rejected.
+
+The CLI reads configuration on each invocation; the optional Dot MCP adapter reads
+it at Bridge startup. Configuration changes require an authorized restart for the
+MCP adapter. Neither path watches files or silently hot-reloads reserved runs.
 
 Configuration is strict: unknown keys, duplicate job IDs, invalid IANA timezones,
 invalid daily `HH:mm`, and unsupported task types fail closed. Each task sets:
