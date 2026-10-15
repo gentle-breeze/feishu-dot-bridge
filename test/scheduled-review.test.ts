@@ -108,3 +108,8 @@ test('Dot owner revocation during an await prevents subsequent socket submission
  assert.equal((await tools.run(b.alice,{task_id:'review',binding_id:binding.id,existing_user_authorization:true})).state,'blocked');assert.equal(submits,0);
  }finally{b.store.close();f.close();}
 });
+
+test('temporary binding-status outage cannot cancel an already accepted event or unlock next-day delivery',async()=>{
+ const f=setup();let online=true,now=NOW;const s=new Scheduler(f.path,f.config,()=>now,async(_p,input)=>{if(!online)throw new Error('socket unavailable');return (input as {operation:string}).operation==='binding'?bound:{result:queued};});
+ try{assert.equal((await s.run('review')).state,'queued');online=false;assert.equal((await s.refresh())[0]!.state,'uncertain');now+=86400000;await assert.rejects(()=>s.run('review'),/previous_task_delivery_unresolved/);}finally{s.close();f.close();}
+});
