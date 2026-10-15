@@ -73,7 +73,7 @@ export class Scheduler {
   }
   private summary(id:string){const r=this.row(id)!;return {id:r.id,jobId:r.jobId,date:r.date,state:r.state,eventId:r.eventId,error:r.error};}
   private async reconcile(job:ReviewJob,id:string){
-    try{await this.bound(job);}catch(e){const revoked=e instanceof BridgeError&&['task_binding_changed','binding_not_found','unauthorized'].includes(e.code);this.update(id,revoked?'cancelled':'uncertain',revoked?'binding_check_failed':'binding_status_unavailable');return this.summary(id);}
+    try{await this.bound(job);}catch(e){const revoked=e instanceof BridgeError&&['task_binding_changed','binding_not_found'].includes(e.code);this.update(id,revoked?'cancelled':'uncertain',revoked?'binding_check_failed':'binding_status_unavailable');return this.summary(id);}
     const r=this.row(id)!;
     try{const result=await this.call({operation:'request_status',binding_id:job.bindingId,request_id:r.requestId});
       const found=z.object({found:z.boolean()}).parse(result);if(found.found)this.accept(id,result);else this.update(id,'uncertain','submission_not_found_no_automatic_resend');
