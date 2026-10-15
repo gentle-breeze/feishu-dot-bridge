@@ -1,0 +1,15 @@
+# INACTIVE TEMPLATE. Review and fill every absolute path before installing.
+# User service: no root, no credentials, no automatic installation by this project.
+[Unit]
+Description=Configured private Bridge task dispatcher
+
+[Service]
+Type=simple
+UMask=0077
+ExecStart=/ABSOLUTE/NODE /ABSOLUTE/BRIDGE/dist/scripts/task-runner.js /ABSOLUTE/PRIVATE/tasks.json /ABSOLUTE/PRIVATE/tasks.sqlite 60000
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=600
+
+[Install]
+WantedBy=default.target

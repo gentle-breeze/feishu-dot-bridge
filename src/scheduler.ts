@@ -1,3 +1,4 @@
+import {skillExecutionSchema,executionStates} from './skill-execution-schema.js';
 /** One-shot scheduler sidecar. It never pumps callbacks or owns Bridge credentials. */
 import { DatabaseSync } from 'node:sqlite';
 import { lstatSync, realpathSync, openSync, closeSync, constants } from 'node:fs';
@@ -10,7 +11,7 @@ import { localClock, reviewPayload, schedulerConfigSchema, type ReviewJob } from
 export type TaskConfig=z.infer<typeof schedulerConfigSchema>;
 type Run={id:string;jobId:string;date:string;digest:string;requestId:string;state:string;payload:string|null;eventId:string|null;updatedAt:number;error:string|null};
 const states=['preparing','ready','submitting','uncertain','queued','received','blocked','failed','cancelled','empty'];
-const schema=`CREATE TABLE runs(id TEXT PRIMARY KEY,jobId TEXT NOT NULL,date TEXT NOT NULL,digest TEXT NOT NULL,requestId TEXT UNIQUE NOT NULL,state TEXT NOT NULL,payload TEXT,eventId TEXT,updatedAt INTEGER NOT NULL,error TEXT,UNIQUE(jobId,date)); PRAGMA user_version=1;`;
+export const taskSchemaV1=`CREATE TABLE runs(id TEXT PRIMARY KEY,jobId TEXT NOT NULL,date TEXT NOT NULL,digest TEXT NOT NULL,requestId TEXT UNIQUE NOT NULL,state TEXT NOT NULL,payload TEXT,eventId TEXT,updatedAt INTEGER NOT NULL,error TEXT,UNIQUE(jobId,date)); PRAGMA user_version=1;`;
 function privateDatabase(path:string) {
   if(!isAbsolute(path)||realpathSync(dirname(path))!==dirname(path))throw new BridgeError('scheduler_private_directory_required');
   for(let p=dirname(path);;p=dirname(p)) {const st=lstatSync(p);if(!st.isDirectory() || (st.uid!==0&&st.uid!==process.getuid?.()) || ((st.mode&0o022)!==0 && !(st.uid===0&&(st.mode&0o1000))))throw new BridgeError('scheduler_untrusted_ancestor');if(dirname(p)===p)break;}
@@ -24,21 +25,23 @@ export class Scheduler {
   readonly db:DatabaseSync;
   constructor(path:string,readonly config:TaskConfig,private now:()=>number=Date.now,private request:(path:string,input:unknown)=>Promise<unknown>=localRequest) {
     schedulerConfigSchema.parse(config);privateDatabase(path);this.db=new DatabaseSync(path);
-    try{this.db.exec('PRAGMA busy_timeout=5000;');this.db.exec('BEGIN IMMEDIATE');
+    try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');this.db.exec('BEGIN IMMEDIATE');
       const version=Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
-      if(version===0){if(Number(this.db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table'").get()!.n)!==0)throw new BridgeError('scheduler_unknown_database');this.db.exec(schema);}
-      else if(version!==1)throw new BridgeError('scheduler_unsupported_schema');
+      if(version===0){if(Number(this.db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table'").get()!.n)!==0)throw new BridgeError('scheduler_unknown_database');this.db.exec(taskSchemaV1);}
+      else if(version!==1 && version!==2)throw new BridgeError('scheduler_unsupported_schema');
       const expected=new DatabaseSync(':memory:');
-      try {expected.exec(schema);const description=(db:DatabaseSync)=>JSON.stringify(db.prepare("SELECT type,name,sql FROM sqlite_master ORDER BY name").all());if(description(this.db)!==description(expected))throw new BridgeError('scheduler_invalid_schema');}finally{expected.close();}
+      try {expected.exec(taskSchemaV1);if(version===2)expected.exec(skillExecutionSchema);const description=(db:DatabaseSync)=>JSON.stringify(db.prepare("SELECT type,name,sql FROM sqlite_master ORDER BY name").all());if(description(this.db)!==description(expected))throw new BridgeError('scheduler_invalid_schema');}finally{expected.close();}
       if(this.db.prepare('PRAGMA quick_check').get()!.quick_check!=='ok')throw new BridgeError('scheduler_invalid_database');
       const columns=this.db.prepare('PRAGMA table_info(runs)').all().map(r=>r.name).join(',');
       if(columns!=='id,jobId,date,digest,requestId,state,payload,eventId,updatedAt,error')throw new BridgeError('scheduler_invalid_schema');
       for(const r of this.db.prepare('SELECT state,updatedAt FROM runs').all())if(!states.includes(String(r.state))||typeof r.updatedAt!=='number'||!Number.isSafeInteger(r.updatedAt)||Number(r.updatedAt)<0)throw new BridgeError('scheduler_invalid_state');
+      if(version<2){this.db.exec(skillExecutionSchema);this.db.exec('PRAGMA user_version=2');}
+      for(const row of this.db.prepare('SELECT state,updatedAt FROM skill_executions').all())if(!executionStates.includes(String(row.state))||!Number.isSafeInteger(row.updatedAt))throw new BridgeError('invalid_skill_execution_state');
       this.db.exec('COMMIT');
     }catch(e){try{this.db.exec('ROLLBACK');}catch{}this.db.close();throw e;}
   }
   close(){this.db.close();}
-  list(){return this.db.prepare('SELECT id,jobId,date,state,eventId,updatedAt,error FROM runs ORDER BY updatedAt DESC LIMIT 100').all();}
+  list(){return this.db.prepare('SELECT id,jobId,date,state,eventId,updatedAt,error FROM runs ORDER BY updatedAt DESC LIMIT 100').all().map(r=>({...r,id:String(r.id),jobId:String(r.jobId),eventId:r.eventId as string|null,state:String(r.state),execution:this.db.prepare('SELECT state,baseSha,commitSha,remoteSha,evidence,error,updatedAt FROM skill_executions WHERE runId=?').get(r.id!)??null}));}
   private row(id:string){return this.db.prepare('SELECT * FROM runs WHERE id=?').get(id) as Run|undefined;}
   private update(id:string,state:string,error:string|null=null,eventId:string|null=null){this.db.prepare("UPDATE runs SET state=?,error=?,eventId=coalesce(?,eventId),updatedAt=? WHERE id=? AND state NOT IN ('received','cancelled','empty','failed')").run(state,error,eventId,this.now(),id);}
   private async call(input:unknown){const r=response.parse(await this.request(this.config.socketPath,input));if('error'in r)throw new BridgeError(r.error);return r.result;}
@@ -52,7 +55,7 @@ export class Scheduler {
     const id='task_'+hash(JSON.stringify([job.id,clock.date])),digest=hash(JSON.stringify({job,socketPath:this.config.socketPath}));
     this.db.exec('BEGIN IMMEDIATE');
     try{let r=this.row(id);if(r&&r.digest!==digest)throw new BridgeError('task_configuration_changed_for_reserved_day');
-      if(!r){if(this.db.prepare("SELECT 1 FROM runs WHERE jobId=? AND state IN ('preparing','ready','submitting','uncertain','queued') LIMIT 1").get(job.id))throw new BridgeError('previous_task_delivery_unresolved');this.db.prepare("INSERT INTO runs(id,jobId,date,digest,requestId,state,updatedAt) VALUES (?,?,?,?,?,'preparing',?)").run(id,job.id,clock.date,digest,id,this.now());
+      if(!r){if(this.db.prepare("SELECT 1 FROM skill_executions e JOIN runs r ON r.id=e.runId WHERE r.jobId=? AND e.state IN ('preparing','context_ready','applying','pushing','push_uncertain')").get(job.id))throw new BridgeError('previous_skill_execution_unresolved');if(this.db.prepare("SELECT 1 FROM runs WHERE jobId=? AND state IN ('preparing','ready','submitting','uncertain','queued') LIMIT 1").get(job.id))throw new BridgeError('previous_task_delivery_unresolved');this.db.prepare("INSERT INTO runs(id,jobId,date,digest,requestId,state,updatedAt) VALUES (?,?,?,?,?,'preparing',?)").run(id,job.id,clock.date,digest,id,this.now());
         // File reading is bounded and synchronous while reserving, so no competing snapshot.
         try{const payload=reviewPayload(job,clock.date,this.now());this.db.prepare('UPDATE runs SET payload=?,state=? WHERE id=?').run(payload,JSON.parse(payload).todayCount?'ready':'empty',id);}catch{this.update(id,'blocked','review_snapshot_rejected');}}
       this.db.exec('COMMIT');
