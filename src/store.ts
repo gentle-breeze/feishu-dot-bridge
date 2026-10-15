@@ -115,7 +115,7 @@ export class Store {
     this.db.prepare('UPDATE local_subscriptions SET active=0 WHERE owner=?').run(owner);
     this.db.prepare("UPDATE local_events SET state='cancelled' WHERE owner=? AND state='pending'").run(owner);
     this.db.prepare("UPDATE local_replies SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM local_events WHERE owner=?)").run(owner);
-    this.db.prepare("UPDATE callback_reactions SET state='cancelled' WHERE state IN ('pending','uncertain') AND eventId IN (SELECT id FROM inbox WHERE owner=?)").run(owner);
+    this.db.prepare("UPDATE callback_reactions SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM inbox WHERE owner=?)").run(owner);
   }
   assertPersonalScope(owner: string, appId: string, tenantKey: string): void {
     for (const table of ['bindings', 'pairs', 'subscriptions', 'inbox', 'revoked']) {

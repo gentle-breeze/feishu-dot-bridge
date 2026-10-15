@@ -105,7 +105,7 @@ function perform(db: DatabaseSync, request: Request, at: number, apply: boolean,
         db.prepare("UPDATE local_events SET state='cancelled' WHERE owner=? AND state='pending'").run(request.owner!);
         db.prepare("UPDATE local_replies SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM local_events WHERE owner=?)").run(request.owner!);
       }
-      if(version>=7) db.prepare("UPDATE callback_reactions SET state='cancelled' WHERE state IN ('pending','uncertain') AND eventId IN (SELECT id FROM inbox WHERE owner=?)").run(request.owner!);
+      if(version>=7) db.prepare("UPDATE callback_reactions SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM inbox WHERE owner=?)").run(request.owner!);
       check(); if (version >= 2) db.prepare("UPDATE mirror_outbox SET state='cancelled' WHERE owner=? AND state='pending'").run(request.owner!);
     }
     return { event: apply ? 'account_revoked' : 'account_revoke_validated', schema_version: version, dry_run: !apply };

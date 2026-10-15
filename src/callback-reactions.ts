@@ -9,7 +9,7 @@ export class CallbackReactions {
     const r=this.db.prepare("SELECT * FROM callback_reactions WHERE state IN ('pending','uncertain') AND attempts<8 AND nextAt<=? ORDER BY acceptedAt LIMIT 1").get(this.now());if(!r)return false;
     const inbox=this.bridge.store.inbox(String(r.eventId)),b=inbox&&this.bridge.store.binding(inbox.owner);
     const state=(s:string)=>this.db.prepare('UPDATE callback_reactions SET state=? WHERE eventId=?').run(s,r.eventId!);
-    if(!inbox || !b || !this.bridge.store.ownedHandlingEvent(b,inbox.id) || this.bridge.store.isRevoked(b.owner)) {state('cancelled');return true;}
+    if(!inbox || !b || !this.bridge.store.ownedHandlingEvent(b,inbox.id) || this.bridge.store.isRevoked(b.owner)) {if(r.state==='uncertain')this.db.prepare('UPDATE callback_reactions SET attempts=8 WHERE eventId=?').run(r.eventId!);else state('cancelled');return true;}
     if(!this.sender.findCheckMark || !this.sender.addCheckMark) {state('dead');return true;}
     this.db.prepare('UPDATE callback_reactions SET attempts=attempts+1,nextAt=? WHERE eventId=?').run(this.now()+Math.min(300000,1000*2**Number(r.attempts)),r.eventId!);
     let sending=false;

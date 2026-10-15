@@ -48,3 +48,9 @@ test('private socket supports bounded JSON CLI requests, never caller-selected o
  try{const b=f.bind();await localSub(f);const path=join(dir,'bridge.sock');server=await startLocalSocket(path,f.bridge,f.alice.id);validateSocketPath(path,true);assert.throws(()=>validateSocketPath(path));const r=await localRequest(path,{operation:'submit',...input(b.id)}) as {result:{event_id:string}};assert.ok(r.result.event_id.startsWith('local_evt_'));await assert.rejects(localRequest(path,{operation:'subscribe'}));await assert.rejects(localRequest(path,{operation:'binding',owner:f.bob.id}));}
  finally{if(server)await new Promise<void>(r=>server!.close(()=>r()));f.store.close();rmSync(dir,{recursive:true,force:true});}
 });
+test('unlink preserves uncertain reaction evidence and stops reconciliation',async()=>{
+ const f=fixture();try{f.bind();await f.subscribe();f.bridge.receive(f.message());f.sender.findCheckMark=async()=>undefined;f.sender.addCheckMark=async()=>{throw new Error('ambiguous POST');};await f.bridge.pump();await f.bridge.pump();f.bridge.unlink(f.alice);f.advance(1000);await f.bridge.pump();const row=f.store.db.prepare('SELECT state,attempts FROM callback_reactions').get()!;assert.equal(row.state,'uncertain');assert.equal(row.attempts,8);}finally{f.store.close();}
+});
+test('malformed local counters fail startup before ambiguous sends can recover',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'MOCK-malformed-')),path=join(dir,'db'),f=fixture(path);try{const b=f.bind();await localSub(f);f.bridge.local.submit(f.alice,input(b.id));f.store.db.exec("UPDATE local_events SET state='sending',nextAt=-1");f.store.close();assert.throws(()=>new Store(path),/Malformed/);const db=new DatabaseSync(path);try{assert.equal(db.prepare('SELECT state FROM local_events').get()!.state,'sending');}finally{db.close();}}finally{rmSync(dir,{recursive:true,force:true});}
+});
