@@ -33,7 +33,7 @@ export class LocalIntake {
   }
   unsubscribe(p:Principal,args:{arguments:{binding_id:string};delivery:{url:string}}) {
     const b=this.binding(p); if(b.id!==args.arguments.binding_id) throw new BridgeError('binding_not_found',403);
-    this.bridge.store.transaction(()=>{ const sub=this.db.prepare('SELECT id FROM local_subscriptions WHERE owner=? AND bindingId=? AND url=?').get(p.id,b.id,args.delivery.url); if(sub) {this.db.prepare('UPDATE local_subscriptions SET active=0 WHERE id=?').run(sub.id!);this.db.prepare("UPDATE local_events SET state='cancelled' WHERE subscriptionId=? AND state='pending'").run(sub.id!);} }); return {};
+    this.bridge.store.transaction(()=>{ const sub=this.db.prepare('SELECT id FROM local_subscriptions WHERE owner=? AND bindingId=? AND url=?').get(p.id,b.id,args.delivery.url); if(sub) {this.db.prepare('UPDATE local_subscriptions SET active=0 WHERE id=?').run(sub.id!);this.db.prepare("UPDATE local_events SET state='cancelled' WHERE subscriptionId=? AND state IN ('pending','sending')").run(sub.id!);} }); return {};
   }
   submit(p:Principal,input:unknown) {
     const args=localSubmitSchema.parse(input), b=this.binding(p); if(args.binding_id!==b.id) throw new BridgeError('binding_not_found',403);
@@ -68,11 +68,14 @@ export class LocalIntake {
     const e=this.db.prepare("SELECT * FROM local_events WHERE state='pending' AND nextAt<=? ORDER BY seq LIMIT 1").get(this.now()) as LocalEvent|undefined; if(!e) return false;
     const sub=this.db.prepare('SELECT * FROM local_subscriptions WHERE id=?').get(e.subscriptionId), b=this.bridge.store.binding(e.owner);
     const state=(value:string)=>this.db.prepare('UPDATE local_events SET state=? WHERE id=?').run(value,e.id);
-    if(!b || b.id!==e.bindingId || this.bridge.store.isRevoked(e.owner) || !sub?.active || Number(sub.expiresAt)<=this.now() || e.expiresAt<=this.now()) {state('cancelled');return true;}
+    if(!b || b.id!==e.bindingId || this.bridge.store.isRevoked(e.owner) || !sub?.active || sub.owner!==e.owner || sub.bindingId!==e.bindingId || Number(sub.expiresAt)<=this.now() || e.expiresAt<=this.now()) {state('cancelled');return true;}
+    if(e.attempts>=8){state('dead');return true;}
     if(classifyText(e.text)==='credential') {state('blocked');return true;}
     this.db.prepare("UPDATE local_events SET state='sending',attempts=attempts+1 WHERE id=?").run(e.id);
     const body=JSON.stringify({eventId:e.id,name:LOCAL_EVENT,timestamp:new Date(e.createdAt).toISOString(),data:{event_id:e.id,binding_id:e.bindingId,text:e.text,source:'local',untrusted:true},cursor:null});
-    try {const r=await this.transport.post(String(sub.url),body,this.headers(e.id,e.subscriptionId,body,this.box.open(String(sub.secret)))); if(r.status>=200&&r.status<300) {state('sent');return true;} if(r.status>=400&&r.status<500&&r.status!==429) {state('dead');if(r.status===410)this.db.prepare('UPDATE local_subscriptions SET active=0 WHERE id=?').run(e.subscriptionId);return true;} } catch { /* at-least-once callback uses stable event id */ }
+    try {const r=await this.transport.post(String(sub.url),body,this.headers(e.id,e.subscriptionId,body,this.box.open(String(sub.secret)))); if(r.status>=200&&r.status<300) {state('sent');return true;} if(this.db.prepare('SELECT state FROM local_events WHERE id=?').get(e.id)?.state!=='sending')return true;if(r.status>=400&&r.status<500&&r.status!==429) {state('dead');if(r.status===410)this.db.prepare('UPDATE local_subscriptions SET active=0 WHERE id=?').run(e.subscriptionId);return true;} } catch { /* at-least-once callback uses stable event id */ }
+    // Unsubscribe/revoke can race a network await. Never resurrect its tombstone.
+    if(this.db.prepare('SELECT state FROM local_events WHERE id=?').get(e.id)?.state!=='sending')return true;
     if(e.attempts+1>=8) state('dead'); else this.db.prepare("UPDATE local_events SET state='pending',nextAt=? WHERE id=?").run(this.now()+Math.min(300000,1000*2**e.attempts),e.id);return true;
   }
 }

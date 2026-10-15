@@ -8,7 +8,10 @@ export async function verifyImageDecoder(): Promise<void> {
   // or the DB are opened if the pinned decoder/resource limiter cannot operate.
   const fixture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
   try { const image = await sanitizeImage(fixture, 'image/png', new AbortController().signal); image.bytes.fill(0); }
-  catch { throw new BridgeError('image_decoder_unavailable'); }
+  catch (error) {
+    if(error instanceof BridgeError && ['image_native_memory_limit_unavailable','invalid_macos_image_policy'].includes(error.code))throw error;
+    throw new BridgeError('image_decoder_unavailable');
+  }
   finally { fixture.fill(0); }
 }
 /** Full decode/re-encode in a separate short-lived process with a minimal env.

@@ -73,7 +73,7 @@ Image input and output are separate opt-ins limited to bounded PNG/JPEG. Audio a
 
 ## Before you start
 
-- **Host:** Linux/macOS, Node.js 24+, npm, persistent disk, process supervision and outbound HTTPS/WebSocket access. Image mode additionally needs Linux `/usr/bin/prlimit` or the compiled macOS resource limiter, plus the pinned `sharp` dependencies.
+- **Host:** Linux/macOS, Node.js 24+, npm, persistent disk, process supervision and outbound HTTPS/WebSocket access. Image mode additionally needs Linux `/usr/bin/prlimit` or the compiled macOS resource limiter with an explicit weaker-policy opt-in (otherwise image mode fails closed), plus the pinned `sharp` dependencies.
 - **Feishu:** your own app, verified app/tenant and private-message permissions. Use one event consumer per app and one bridge process per database.
 - **Dot:** an existing dot and an owner-only official OpenAI Tunnel. Your actual account must support the required MCP Events and Tunnel combination; check the [deployment requirements](docs/DEPLOYMENT.md#1-选择和检查主机).
 

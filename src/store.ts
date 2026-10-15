@@ -113,7 +113,7 @@ export class Store {
   revoke(owner: string) { this.transaction(() => { this.db.prepare('INSERT OR IGNORE INTO revoked(owner) VALUES (?)').run(owner); this.db.prepare('UPDATE bindings SET active=0 WHERE owner=?').run(owner); this.db.prepare('UPDATE subscriptions SET active=0 WHERE owner=?').run(owner); this.db.prepare('DELETE FROM pairs WHERE owner=?').run(owner); this.cancelExtensions(owner); this.db.prepare("UPDATE mirror_outbox SET state='cancelled' WHERE owner=? AND state='pending'").run(owner); this.db.prepare("UPDATE output_outbox SET state='cancelled',payload='',failure='account_revoked' WHERE owner=? AND state='pending'").run(owner); this.db.prepare('UPDATE output_media SET consumed=1 WHERE owner=?').run(owner); this.db.prepare('DELETE FROM output_chunks WHERE mediaId IN (SELECT id FROM output_media WHERE owner=?)').run(owner); }); }
   cancelExtensions(owner:string) {
     this.db.prepare('UPDATE local_subscriptions SET active=0 WHERE owner=?').run(owner);
-    this.db.prepare("UPDATE local_events SET state='cancelled' WHERE owner=? AND state='pending'").run(owner);
+    this.db.prepare("UPDATE local_events SET state='cancelled' WHERE owner=? AND state IN ('pending','sending')").run(owner);
     this.db.prepare("UPDATE local_replies SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM local_events WHERE owner=?)").run(owner);
     this.db.prepare("UPDATE callback_reactions SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM inbox WHERE owner=?)").run(owner);
   }

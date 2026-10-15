@@ -102,7 +102,7 @@ function perform(db: DatabaseSync, request: Request, at: number, apply: boolean,
       if (version >= 5) { check(); db.prepare("UPDATE output_outbox SET state='cancelled',payload='',failure='account_revoked' WHERE owner=? AND state='pending'").run(request.owner!); check(); db.prepare('UPDATE output_media SET consumed=1 WHERE owner=?').run(request.owner!); check(); db.prepare('DELETE FROM output_chunks WHERE mediaId IN (SELECT id FROM output_media WHERE owner=?)').run(request.owner!); }
       if(version>=6) {
         db.prepare('UPDATE local_subscriptions SET active=0 WHERE owner=?').run(request.owner!);
-        db.prepare("UPDATE local_events SET state='cancelled' WHERE owner=? AND state='pending'").run(request.owner!);
+        db.prepare("UPDATE local_events SET state='cancelled' WHERE owner=? AND state IN ('pending','sending')").run(request.owner!);
         db.prepare("UPDATE local_replies SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM local_events WHERE owner=?)").run(request.owner!);
       }
       if(version>=7) db.prepare("UPDATE callback_reactions SET state='cancelled' WHERE state='pending' AND eventId IN (SELECT id FROM inbox WHERE owner=?)").run(request.owner!);

@@ -61,7 +61,7 @@ A successful original Feishu-event callback HTTP 2xx atomically records acceptan
 and reserves a `callback_reactions` row. No historical marks are backfilled.
 The next worker pass looks for this application's own `CheckMark`, then adds it if
 there has been no ambiguous POST. It never mistakes another user's/app's mark for
-its own. Queries are bounded and fail closed on incomplete pagination.
+its own. Queries use the official maximum of 50 items per page, stop after ten pages, and fail closed on malformed or incomplete pagination.
 
 **CheckMark means the callback endpoint accepted the notification. It does not
 mean Dot read the text, began work, completed work or approved an action.**
@@ -70,14 +70,21 @@ Use `callback_reaction_status` for `pending`, `sending`, `sent`, `dead`, `cancel
 or `uncertain`, attempts, callback acceptance time and reaction ID. A lost POST
 response or restart during POST becomes uncertain. Later worker passes only check
 for an existing mark, never repeat that POST. After eight total attempts, unresolved
-uncertainty remains visible for manual destination verification. Definite API
-rejection is terminal. Missing Feishu reaction permissions do not undo callback
+uncertainty remains visible for manual destination verification. Documented definite API
+rejection is terminal. Code 231015 (duplicate still processing), unknown codes, lost
+responses and malformed/mismatched receipts remain uncertain and only trigger GET
+reconciliation. A missing list entry is never proof that an earlier POST failed. Missing Feishu reaction permissions do not undo callback
 acceptance; no permission is granted automatically by this code.
 
 ## Image executors
 
 Linux retains `/usr/bin/prlimit` with upstream CPU, data, fd and file-size limits.
-macOS uses `native/image-limit.c`, a mandatory native `setrlimit` launcher:
+macOS has no enforceable equivalent native memory ceiling. **Its default image
+policy therefore refuses processing before credentials or the database are opened.**
+If an operator separately accepts the weaker boundary, the explicit configuration
+`FEISHU_MACOS_IMAGE_POLICY=resource-limits-only` enables `native/image-limit.c`, a
+mandatory native `setrlimit` launcher. This is not enabled in installation templates;
+CI sets it only for synthetic tests. Unknown policies fail closed. Build with:
 
 ```sh
 npm ci --ignore-scripts
@@ -92,7 +99,7 @@ and the parent's eight-second kill deadline. Missing/untrusted launcher or faile
 limits fail closed during the synthetic startup decoder probe. There is no direct
 Node fallback. Both image input and output use the same platform abstraction.
 
-Neither this launcher nor upstream Linux prlimit is a filesystem/network namespace
+Building the launcher alone does not opt into the weaker policy. Neither this launcher nor upstream Linux prlimit is a filesystem/network namespace
 sandbox. Darwin has no equivalent enforceable Linux RLIMIT_DATA bound for native
 allocations: native decoder memory remains a platform-specific limitation. Use a
 trusted host; prefer Linux with an external memory limit if a hard native memory
@@ -150,3 +157,22 @@ real callback/private-network destination, end-user client rendering or deployme
 is verified by these tests. Check CI for Linux maintenance/image coverage and the
 macOS focused image/local-intake job. A successful callback/reaction test does not
 establish production end-to-end delivery.
+
+## Official reaction protocol verification (2026-10-15)
+
+- [Emoji types](https://open.feishu.cn/document/server-docs/im-v1/message-reaction/emojis-introduce):
+  `CheckMark` is the exact case-sensitive enum and is distinct from `DONE`.
+- [List reactions](https://open.feishu.cn/document/server-docs/im-v1/message-reaction/list):
+  page size is at most 50; when operator type is `app`, the operator ID is the bot's
+  application ID (`app_id`). `has_more` and the next page token govern completeness.
+  The adapter matches application type, application ID and emoji together. Another
+  user's or application's mark cannot establish this bridge's acceptance receipt.
+- [Create reaction](https://open.feishu.cn/document/server-docs/im-v1/message-reaction/create):
+  the request is a POST with `reaction_type.emoji_type`; nonzero codes indicate a
+  failure response, but 231015 specifically means duplicate processing is ongoing.
+  It is not evidence that no reaction was created. The fork conservatively retains
+  uncertainty for that response and does not resend the POST.
+
+The official rendered pages were read without login or API debugging. These
+protocol checks and mocked SDK transports do not establish real permission grants
+or delivery. Startup does not request any additional Feishu permission automatically.

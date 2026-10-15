@@ -54,3 +54,14 @@ test('unlink preserves uncertain reaction evidence and stops reconciliation',asy
 test('malformed local counters fail startup before ambiguous sends can recover',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'MOCK-malformed-')),path=join(dir,'db'),f=fixture(path);try{const b=f.bind();await localSub(f);f.bridge.local.submit(f.alice,input(b.id));f.store.db.exec("UPDATE local_events SET state='sending',nextAt=-1");f.store.close();assert.throws(()=>new Store(path),/Malformed/);const db=new DatabaseSync(path);try{assert.equal(db.prepare('SELECT state FROM local_events').get()!.state,'sending');}finally{db.close();}}finally{rmSync(dir,{recursive:true,force:true});}
 });
+for(const status of [503,410])test(`unsubscribe persists across in-flight HTTP ${status} and resubscribe`,async()=>{
+ const f=fixture();try{const b=f.bind();await localSub(f);const e=f.bridge.local.submit(f.alice,input(b.id));let release!:(r:{status:number;body:string})=>void;let entered!:()=>void;const started=new Promise<void>(r=>entered=r);
+ const original=f.transport.post;f.transport.post=async()=>{entered();return new Promise(r=>release=r);};const pumping=f.bridge.pump();await started;
+ f.bridge.unsubscribe(f.alice,{name:'local.message.created',arguments:{binding_id:b.id},delivery:{mode:'webhook',url:'https://callback.example/local'}});
+ f.transport.post=original;await localSub(f);release({status,body:''});await pumping;
+ assert.equal(f.bridge.local.status(f.alice,{event_id:e.event_id}).state,'cancelled');assert.equal(f.store.db.prepare('SELECT active FROM local_subscriptions').get()!.active,1);const calls=f.calls.length;f.advance(2000);await f.bridge.pump();assert.equal(f.calls.length,calls);
+ }finally{f.store.close();}
+});
+test('subscription renewal cannot extend a queued local event lease',async()=>{
+ const f=fixture();try{const b=f.bind();await localSub(f);const e=f.bridge.local.submit(f.alice,input(b.id));f.advance(3600001);f.alice.expiresAt=f.now()+3600000;await localSub(f);await f.bridge.pump();assert.equal(f.bridge.local.status(f.alice,{event_id:e.event_id}).state,'cancelled');}finally{f.store.close();}
+});

@@ -18,6 +18,9 @@ jobs:
       - run: npm run demo
   macos-extensions:
     runs-on: macos-latest
+    env:
+      # Explicit synthetic-test-only acceptance of the documented Darwin limitation.
+      FEISHU_MACOS_IMAGE_POLICY: resource-limits-only
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,4 +30,4 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm run build:image-executor:macos
-      - run: node --test dist/test/local-extensions.test.js dist/test/image-executor.test.js dist/test/media-image-integration.test.js dist/test/callback-policy.test.js
+      - run: node --test dist/test/local-extensions.test.js dist/test/image-executor.test.js dist/test/media-image-integration.test.js dist/test/callback-policy.test.js dist/test/reaction-transport.test.js

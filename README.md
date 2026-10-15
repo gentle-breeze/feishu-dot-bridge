@@ -73,7 +73,7 @@ dot --MCP tools--> Official OpenAI Tunnel --loopback MCP--> bridge
 
 ## 开始前准备好
 
-- **主机：** Linux/macOS、Node.js 24+、npm，以及持久磁盘、进程监管和必要的出站 HTTPS/WebSocket 连通性。图片模式需 Linux `/usr/bin/prlimit`，或 macOS 编译后的受限执行器，以及锁定的 `sharp` 依赖。
+- **主机：** Linux/macOS、Node.js 24+、npm，以及持久磁盘、进程监管和必要的出站 HTTPS/WebSocket 连通性。图片模式需 Linux `/usr/bin/prlimit`，或 macOS 编译后的受限执行器（默认拒绝缺少原生内存硬限制的处理；较弱模式需显式选择），以及锁定的 `sharp` 依赖。
 - **飞书：** 你自己的应用、已核实的 app/tenant 和私聊收发权限；同一应用只能有一个事件消费者，每个数据库只能有一个 bridge 进程。
 - **dot：** 已有 dot 和仅本人可用的官方 OpenAI Tunnel；实际账号须支持所需的 MCP Events 与 Tunnel 组合，请先核对[部署要求](docs/DEPLOYMENT.md#1-选择和检查主机)。
 

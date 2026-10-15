@@ -69,6 +69,12 @@ export function decodeFeishu(app: FeishuApp, raw: string, headers: Headers, now 
 }
 export const silentLarkLogger = { debug() {}, info() {}, warn() {}, error() {}, trace() {} };
 export function createLarkHttp(network?: FeishuNetwork) { const http = network?.http ?? axios.create({ timeout: 10000, maxRedirects: 0, maxContentLength: 262144, maxBodyLength: 4 * 1024 * 1024 + 65536 }); if (!network) http.interceptors.response.use(response => response.data); return http as unknown as NonNullable<ConstructorParameters<typeof lark.Client>[0]['httpInstance']>; }
+const reactionIdSchema = z.string().min(1).max(256).regex(/^[^\s\x00-\x1f]+$/);
+const reactionSchema = z.object({reaction_id:reactionIdSchema,operator:z.object({operator_id:z.string().min(1).max(256),operator_type:z.enum(['app','user'])}),reaction_type:z.object({emoji_type:z.string().min(1).max(128)})});
+const reactionPageSchema=z.object({items:z.array(reactionSchema).max(50),has_more:z.boolean(),page_token:z.string().max(4096).optional()});
+// Documented rejection codes only. 231015 means a duplicate is still processing,
+// so it and unknown/server codes must remain uncertain and be reconciled by GET.
+const reactionRejections=new Set([230110,231001,231002,231003,231004,231005,231006,231008,231012,231013,231014,231017,231018,231019,231020,231021,231022,232009]);
 export class LarkSender implements FeishuSender {
   private clients = new Map<string, lark.Client>();
   constructor(apps: FeishuApp[], network?: FeishuNetwork) {
@@ -87,22 +93,32 @@ export class LarkSender implements FeishuSender {
   async findCheckMark(appId:string,messageId:string):Promise<string|undefined> {
     let token:string|undefined;
     for(let page=0;page<10;page++) {
-      const r=await this.outputClient(appId).im.messageReaction.list({path:{message_id:messageId},params:{reaction_type:'CheckMark',page_size:100,page_token:token}});
-      if(r.code!==0 || !r.data) throw new BridgeError('reaction_lookup_failed');
-      const own=r.data.items.find(x=>x.operator?.operator_type==='app' && x.operator.operator_id===appId && x.reaction_type?.emoji_type==='CheckMark');
+      const r=await this.outputClient(appId).im.messageReaction.list({path:{message_id:messageId},params:{reaction_type:'CheckMark',page_size:50,page_token:token}});
+      if(r.code!==0) throw new BridgeError('reaction_lookup_failed');
+      const parsed=reactionPageSchema.safeParse(r.data);if(!parsed.success)throw new BridgeError('reaction_lookup_incomplete');
+      const data=parsed.data;
+      const own=data.items.find(x=>x.operator?.operator_type==='app' && x.operator.operator_id===appId && x.reaction_type?.emoji_type==='CheckMark');
       if(own?.reaction_id)return own.reaction_id;
-      if(!r.data.has_more)return undefined;
-      if(!r.data.page_token || r.data.page_token===token)throw new BridgeError('reaction_lookup_incomplete');
-      token=r.data.page_token;
+      if(!data.has_more)return undefined;
+      if(!data.page_token || data.page_token===token)throw new BridgeError('reaction_lookup_incomplete');
+      token=data.page_token;
     }
     throw new BridgeError('reaction_lookup_incomplete');
   }
   async addCheckMark(appId:string,messageId:string):Promise<string> {
-    const r=await this.outputClient(appId).im.messageReaction.create({path:{message_id:messageId},data:{reaction_type:{emoji_type:'CheckMark'}}});
-    if(typeof r.code==='number' && r.code!==0)throw new BridgeError('reaction_rejected');
-    if(r.code!==0 || !r.data?.reaction_id)throw new BridgeError('reaction_receipt_invalid');
-    return r.data.reaction_id;
+    let r;
+    try {r=await this.outputClient(appId).im.messageReaction.create({path:{message_id:messageId},data:{reaction_type:{emoji_type:'CheckMark'}}});}
+    catch(error) {
+      const code=axios.isAxiosError(error)?error.response?.data?.code:undefined;
+      if(reactionRejections.has(code))throw new BridgeError('reaction_rejected');
+      throw new BridgeError('reaction_receipt_uncertain');
+    }
+    if(reactionRejections.has(r?.code!))throw new BridgeError('reaction_rejected');
+    const parsed=reactionSchema.safeParse(r?.data);
+    if(r?.code!==0 || !parsed.success || parsed.data.operator.operator_type!=='app' || parsed.data.operator.operator_id!==appId || parsed.data.reaction_type.emoji_type!=='CheckMark')throw new BridgeError('reaction_receipt_uncertain');
+    return parsed.data.reaction_id;
   }
+
   async uploadImage(appId:string, bytes:Buffer):Promise<string> {
     if(!bytes.length || bytes.length>4*1024*1024) throw new BridgeError('media_size_exceeded');
     // Official SDK builds multipart/form-data; Buffer only, never a ReadStream/path.
