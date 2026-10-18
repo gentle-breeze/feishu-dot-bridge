@@ -52,7 +52,7 @@ if(process.env.TASK_CONFIG_FILE || process.env.TASK_DATABASE_PATH) {
   if(taskConfig.socketPath!==process.env.LOCAL_SOCKET_PATH || resolve(process.env.TASK_DATABASE_PATH)===resolve(runtime.databasePath))throw new BridgeError('invalid_task_storage_or_socket');
   scheduledTasks=new ScheduledTaskTools(bridge,personal.owner,process.env.TASK_DATABASE_PATH,taskConfig);
 }
-const app = makeApp({ authMode: runtime.mode, publicUrl: runtime.baseUrl, issuer: runtime.issuer, apps, allowedOrigins: (process.env.ALLOWED_ORIGINS ?? 'https://chatgpt.com').split(',') }, bridge, auth, media, scheduledTasks);
+const app = makeApp({ authMode: runtime.mode, publicUrl: runtime.baseUrl, issuer: runtime.issuer, apps, allowedOrigins: (process.env.ALLOWED_ORIGINS ?? 'https://chatgpt.com').split(',') }, bridge, auth, media, scheduledTasks, event => { console.log(JSON.stringify(event)); });
 const server = nodeServer(app, runtime.baseUrl, runtime.allowedHosts);
 const wsIngress = new FeishuWebSocketIngress(apps, message => media ? media.receiveAuthenticated(message) : bridge.receive(message), {
   mediaEnabled: imagesEnabled,

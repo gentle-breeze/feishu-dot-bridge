@@ -1,3 +1,4 @@
+import { diagnosticStage, subscriptionSaved } from './request-diagnostics.js';
 import { z } from 'zod';
 import { Webhook } from 'standardwebhooks';
 import { BridgeError, type Principal, type CallbackTransport, type FeishuSender } from './types.js';
@@ -21,14 +22,17 @@ export class LocalIntake {
     const b=this.binding(p); if(args.arguments.binding_id!==b.id) throw new BridgeError('binding_not_found',403);
     if(!validSecret(args.delivery.secret)) throw new BridgeError('invalid_signing_secret');
     const id='local_sub_'+hash(JSON.stringify([p.id,b.id,args.delivery.url])), challenge=randomToken(), body=JSON.stringify({type:'verification',challenge}), started=this.now();
+    diagnosticStage('callback_verification');
     try { const r=await this.transport.post(args.delivery.url,body,this.headers('verify_'+randomToken(),id,body,args.delivery.secret)); if(r.status<200 || r.status>=300 || this.now()-started>10000 || !equal(JSON.parse(r.body).challenge,challenge)) throw new Error(); } catch { throw new BridgeError('callback_verification_failed'); }
     const expiresAt=Math.min(p.expiresAt,this.now()+Math.min(args.ttlMs??3600000,3600000));
+    diagnosticStage('database_save');
     this.bridge.store.transaction(()=>{
       if(this.binding(p).id!==b.id) throw new BridgeError('binding_not_found',403);
       this.db.prepare('UPDATE local_subscriptions SET active=0 WHERE bindingId=? AND expiresAt<=?').run(b.id,this.now());
       if(this.db.prepare('SELECT 1 FROM local_subscriptions WHERE bindingId=? AND active=1 AND id!=?').get(b.id,id)) throw new BridgeError('subscription_exists_unsubscribe_first');
       this.db.prepare('INSERT INTO local_subscriptions(id,owner,bindingId,url,secret,expiresAt) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET secret=excluded.secret,expiresAt=excluded.expiresAt,active=1').run(id,p.id,b.id,args.delivery.url,this.box.seal(args.delivery.secret),expiresAt);
     });
+    subscriptionSaved(expiresAt);
     return {id,refreshBefore:new Date(expiresAt).toISOString(),cursor:null,truncated:false};
   }
   unsubscribe(p:Principal,args:{arguments:{binding_id:string};delivery:{url:string}}) {

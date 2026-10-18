@@ -1,3 +1,4 @@
+import { diagnosticFailure, diagnosticStage } from './request-diagnostics.js';
 import {executionContextSchema,revisionSchema,reconcileExecutionSchema} from './skill-execution.js';
 import { ScheduledTaskTools, scheduledTaskSchema, runScheduledTaskSchema } from './scheduled-task-tools.js';
 import { LOCAL_EVENT, localReplySchema, localStatusSchema } from './local-intake.js';
@@ -103,15 +104,19 @@ const event = bridge.getEvent(p, req.params.arguments), notice = media?.describe
     description: event.description + ' New image events and rich posts with bounded embedded images may include safe media metadata with an expiry time; get_event_image reads a newly received supported image only. Callback metadata is an at-receipt snapshot, not a current availability guarantee; get_event gives current status. Audio and other unsupported media produce a fixed unsupported notice and are never downloaded. A notice is not evidence that media was downloaded or processed.',
     payloadSchema: z.toJSONSchema(z.object({ event_id: z.string(), binding_id: z.string(), text: z.string(), content_status: z.enum(['credential_blocked', 'unsupported']).optional(),
       media: z.object({ state: z.string(), source: z.literal('feishu'), kind: z.literal('image').optional(), image_count: z.number().int().min(1).max(4).optional(), expires_at: z.string().optional(), at_receipt: z.boolean().optional() }).strict().optional() }).strict()) } : event, localEvent] }));
-  s.setRequestHandler('events/subscribe', { params: subscribeSchema, result: customResult }, async args => {
-    try { return { resultType: 'complete' as const, ...await bridge.subscribe(p, args) }; }
-    catch (error) { if (error instanceof BridgeError && error.code === 'callback_verification_failed') throw new ProtocolError(-32015, 'Callback verification failed', { reason: 'challenge_failed' }); if (error instanceof BridgeError && (error.status === 401 || error.status === 403)) throw new ProtocolError(-32012, 'Forbidden'); throw new ProtocolError(-32602, error instanceof BridgeError ? error.code : 'invalid_request'); }
+  s.setRequestHandler('events/subscribe', { params: z.preprocess(input => {
+    diagnosticStage('parameter_validation');
+    if (!subscribeSchema.safeParse(input).success) diagnosticFailure();
+    return input;
+  }, subscribeSchema), result: customResult }, async args => {
+    try { diagnosticStage('parameter_validation'); return { resultType: 'complete' as const, ...await bridge.subscribe(p, args) }; }
+    catch (error) { diagnosticFailure(); if (error instanceof BridgeError && error.code === 'callback_verification_failed') throw new ProtocolError(-32015, 'Callback verification failed', { reason: 'challenge_failed' }); if (error instanceof BridgeError && (error.status === 401 || error.status === 403)) throw new ProtocolError(-32012, 'Forbidden'); throw new ProtocolError(-32602, error instanceof BridgeError ? error.code : 'invalid_request'); }
   });
   s.setRequestHandler('events/unsubscribe', { params: unsubscribeSchema, result: customResult }, async args => ({ resultType: 'complete' as const, ...bridge.unsubscribe(p, args) }));
   return s;
 }
 /** Uses the official v2 SDK to enforce modern MCP request envelopes/headers and error semantics. */
 export async function handleMcp(request: Request, bridge: Bridge, principal: Principal, mode: AuthMode = 'oauth', media?: MediaInputCandidate, tasks?:ScheduledTaskTools): Promise<Response> {
-  const handler = createMcpHandler(() => server(bridge, principal, mode, media, tasks), { legacy: 'reject', responseMode: 'auto', maxRequestBodySize: 262144, onerror: () => { /* Never log SDK error payloads, tokens or message text. */ } });
+  const handler = createMcpHandler(() => server(bridge, principal, mode, media, tasks), { legacy: 'reject', responseMode: 'auto', maxRequestBodySize: 262144, onerror: error => { if (error && typeof error === 'object' && 'code' in error && error.code === -32602) diagnosticStage('parameter_validation'); diagnosticFailure(); } });
   try { return await handler.fetch(request); } finally { await handler.close(); }
 }

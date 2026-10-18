@@ -1,3 +1,4 @@
+import { diagnosticStage, subscriptionSaved } from './request-diagnostics.js';
 import { LocalIntake, LOCAL_EVENT } from './local-intake.js';
 import { CallbackReactions } from './callback-reactions.js';
 import { OutputDelivery, type OutputDecoder } from './output.js';
@@ -92,11 +93,12 @@ export class Bridge {
   }
   private subId(owner: string, bindingId: string, url: string) { return `sub_${hash(JSON.stringify([owner, url, EVENT_NAME, { binding_id: bindingId }]))}`; }
   async subscribe(p: Principal, input: unknown) {
-    this.authorize(p); const args = subscribeSchema.parse(input); if(args.name===LOCAL_EVENT) return this.local.subscribe(p,args); const binding = this.store.binding(p.id);
+    diagnosticStage('authentication'); this.authorize(p); diagnosticStage('parameter_validation'); const args = subscribeSchema.parse(input); if(args.name===LOCAL_EVENT) return this.local.subscribe(p,args); const binding = this.store.binding(p.id);
     if (!binding || binding.id !== args.arguments.binding_id) throw new BridgeError('binding_not_found', 403);
     if (!validSecret(args.delivery.secret)) throw new BridgeError('invalid_signing_secret');
     const id = this.subId(p.id, binding.id, args.delivery.url), challenge = randomToken();
     const body = JSON.stringify({ type: 'verification', challenge });
+    diagnosticStage('callback_verification');
     const started = this.now(); let response;
     try { response = await this.transport.post(args.delivery.url, body, this.signedHeaders(id, `verify_${randomToken()}`, body, args.delivery.secret)); } catch { this.verificationDiagnostic('request_failed', started); throw new BridgeError('callback_verification_failed'); }
     let echoed: unknown, parsed = true; try { echoed = JSON.parse(response.body)?.challenge; } catch { parsed = false; }
@@ -104,16 +106,19 @@ export class Bridge {
     this.verificationDiagnostic(reason, started, response.status);
     if (reason !== 'verified') throw new BridgeError('callback_verification_failed');
     const expiresAt = Math.min(this.now() + Math.min(args.ttlMs ?? 3600000, 3600000), p.expiresAt);
+    diagnosticStage('database_save');
     this.store.transaction(() => {
-      this.authorize(p); if (!this.store.bindingById(binding.id)) throw new BridgeError('binding_not_found', 403);
+      diagnosticStage('authentication'); this.authorize(p); diagnosticStage('parameter_validation'); if (!this.store.bindingById(binding.id)) throw new BridgeError('binding_not_found', 403);
       // MVP permits one dot subscription per binding; prevent accidental fan-out to different chats.
       const other = this.store.db.prepare('SELECT id FROM subscriptions WHERE bindingId=? AND id!=? AND active=1 AND expiresAt>?').get(binding.id, id, this.now());
       if (other) throw new BridgeError('subscription_exists_unsubscribe_first');
+      diagnosticStage('database_save');
       const existing = this.store.subscription(id); const changed = existing && this.box.open(existing.secret) !== args.delivery.secret;
       const old = changed ? existing.secret : existing && existing.rotateUntil > this.now() ? existing.oldSecret : null;
       const rotateUntil = changed ? this.now() + 300000 : old ? existing!.rotateUntil : 0;
       this.store.db.prepare('INSERT INTO subscriptions(id,owner,bindingId,url,secret,oldSecret,rotateUntil,expiresAt) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET secret=excluded.secret,oldSecret=excluded.oldSecret,rotateUntil=excluded.rotateUntil,expiresAt=excluded.expiresAt,active=1').run(id, p.id, binding.id, args.delivery.url, this.box.seal(args.delivery.secret), old, rotateUntil, expiresAt);
     });
+    subscriptionSaved(expiresAt);
     return { id, refreshBefore: new Date(expiresAt).toISOString(), cursor: null, truncated: false };
   }
   unsubscribe(p: Principal, input: unknown) { this.authorize(p); const args = unsubscribeSchema.parse(input); if(args.name===LOCAL_EVENT) return this.local.unsubscribe(p,args); const id = this.subId(p.id, args.arguments.binding_id, args.delivery.url); this.store.transaction(() => { this.store.db.prepare('UPDATE subscriptions SET active=0 WHERE id=? AND owner=?').run(id, p.id); this.store.db.prepare("UPDATE jobs SET state='cancelled' WHERE subscriptionId=? AND state='pending'").run(id); }); return {}; }

@@ -1,3 +1,4 @@
+import { traceRequests, diagnosticStage, diagnosticFailure, type DiagnosticSink } from './request-diagnostics.js';
 import type { ScheduledTaskTools } from './scheduled-task-tools.js';
 import { createServer, type Server } from 'node:http';
 import { Bridge } from './bridge.js';
@@ -9,10 +10,10 @@ import { handleMcp } from './mcp.js';
 import type { MediaInputCandidate } from './media-input.js';
 export interface AppConfig { authMode: AuthMode; publicUrl: string; issuer?: string; apps: FeishuApp[]; allowedOrigins: string[] }
 export interface Authenticator { authenticate(header: string | null): Promise<Principal> }
-export function makeApp(config: AppConfig, bridge: Bridge, auth: Authenticator, media?: MediaInputCandidate, tasks?:ScheduledTaskTools) {
+export function makeApp(config: AppConfig, bridge: Bridge, auth: Authenticator, media?: MediaInputCandidate, tasks?:ScheduledTaskTools, diagnostic?: DiagnosticSink) {
   const resource = `${config.publicUrl}/mcp`, metadataUrl = `${config.publicUrl}/.well-known/oauth-protected-resource/mcp`;
   const json = (body: unknown, status = 200, extra: Record<string, string> = {}) => Response.json(body, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...extra } });
-  return async (req: Request): Promise<Response> => {
+  return traceRequests(async (req: Request): Promise<Response> => {
     try {
       const url = new URL(req.url);
       if (req.headers.has('origin') && !config.allowedOrigins.includes(req.headers.get('origin')!)) return json({ error: 'forbidden_origin' }, 403);
@@ -20,8 +21,10 @@ export function makeApp(config: AppConfig, bridge: Bridge, auth: Authenticator, 
       if (config.authMode === 'oauth' && req.method === 'GET' && ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'].includes(url.pathname)) return json({ resource, authorization_servers: [config.issuer], scopes_supported: ['bridge:use'], bearer_methods_supported: ['header'] });
       if (url.pathname === '/mcp') {
         if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { allow: 'POST' });
+        diagnosticStage('authentication');
         const principal = await auth.authenticate(req.headers.get(config.authMode === 'personal-tunnel' ? PERSONAL_HEADER : 'authorization'));
         if (bridge.store.isRevoked(principal.id)) throw new BridgeError('unauthorized', 401);
+        diagnosticStage('protocol_validation');
         return await handleMcp(req, bridge, principal, config.authMode, media, tasks);
       }
       const appId = /^\/feishu\/events\/([A-Za-z0-9_-]+)$/.exec(url.pathname)?.[1];
@@ -36,8 +39,8 @@ export function makeApp(config: AppConfig, bridge: Bridge, auth: Authenticator, 
         return json({ code: 0 });
       }
       return json({ error: 'not_found' }, 404);
-    } catch (error) { const status = error instanceof BridgeError ? error.status : 500; return json({ error: status === 500 ? 'internal_error' : (error as BridgeError).code }, status, status === 401 && config.authMode === 'oauth' ? { 'www-authenticate': `Bearer resource_metadata="${metadataUrl}", scope="bridge:use"` } : {}); }
-  };
+    } catch (error) { diagnosticFailure(); const status = error instanceof BridgeError ? error.status : 500; return json({ error: status === 500 ? 'internal_error' : (error as BridgeError).code }, status, status === 401 && config.authMode === 'oauth' ? { 'www-authenticate': `Bearer resource_metadata="${metadataUrl}", scope="bridge:use"` } : {}); }
+  }, diagnostic);
 }
 /** Bounded Node HTTP adapter. Public TLS/rate limiting terminate at your reverse proxy. */
 export function nodeServer(app: (r: Request) => Promise<Response>, publicUrl: string, allowedHosts: string[]): Server {
