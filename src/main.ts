@@ -1,3 +1,4 @@
+import { startBoundApprovals } from './claude-approval/host.js';
 import { resolve } from 'node:path';
 import { ScheduledTaskTools } from './scheduled-task-tools.js';
 import { boundedJson, schedulerConfigSchema } from './scheduled-review.js';
@@ -52,12 +53,24 @@ if(process.env.TASK_CONFIG_FILE || process.env.TASK_DATABASE_PATH) {
   if(taskConfig.socketPath!==process.env.LOCAL_SOCKET_PATH || resolve(process.env.TASK_DATABASE_PATH)===resolve(runtime.databasePath))throw new BridgeError('invalid_task_storage_or_socket');
   scheduledTasks=new ScheduledTaskTools(bridge,personal.owner,process.env.TASK_DATABASE_PATH,taskConfig);
 }
+const approvalDirectory = process.env.CLAUDE_APPROVAL_DIR;
+if (approvalDirectory && (!personal || apps.length !== 1 || apps[0]!.ingress !== 'websocket')) throw new BridgeError('claude_approval_requires_personal_websocket');
+let approvals: Awaited<ReturnType<typeof startBoundApprovals>> | undefined;
 const app = makeApp({ authMode: runtime.mode, publicUrl: runtime.baseUrl, issuer: runtime.issuer, apps, allowedOrigins: (process.env.ALLOWED_ORIGINS ?? 'https://chatgpt.com').split(',') }, bridge, auth, media, scheduledTasks);
 const server = nodeServer(app, runtime.baseUrl, runtime.allowedHosts);
-const wsIngress = new FeishuWebSocketIngress(apps, message => media ? media.receiveAuthenticated(message) : bridge.receive(message), {
+const wsIngress = new FeishuWebSocketIngress(apps, message => {
+  if (approvalDirectory && message.text.startsWith('/claude ')) {
+    const state = approvals?.receiveAuthenticated(message) ?? 'approval_unavailable';
+    return { state };
+  }
+  return media ? media.receiveAuthenticated(message) : bridge.receive(message);
+}, {
   mediaEnabled: imagesEnabled,
   network: feishuNetwork,
-  notice: event => { console.log(JSON.stringify({ event })); diagnostic({ event: 'bridge_ws_lifecycle', state: event }); },
+  notice: event => {
+    if (event === 'ws_reconnecting' || event === 'ws_failed') approvals?.disconnected();
+    if (event === 'ws_reconnected' || event === 'ws_ready') approvals?.reconnected();
+    console.log(JSON.stringify({ event })); diagnostic({ event: 'bridge_ws_lifecycle', state: event }); },
   onTerminalFailure: () => { console.error('{"event":"bridge_ingress_terminal_failure"}'); process.exitCode = 1; void shutdown(); }
 });
 let localServer:LocalServer|undefined;
@@ -65,13 +78,15 @@ let timer: NodeJS.Timeout | undefined;
 let closing: Promise<void> | undefined;
 function shutdown(): Promise<void> {
   if (closing) return closing;
-  closing = (async () => { clearInterval(timer); if(localServer) await new Promise<void>(resolve=>localServer!.close(()=>resolve())); wsIngress.stop(); media?.close(); mediaTransport?.close(); feishuNetwork?.close(); await new Promise<void>(resolve => server.close(() => resolve())); await bridge.waitForIdle(); transport.close?.(); store.close(); })();
+  closing = (async () => { clearInterval(timer); await approvals?.close(); if(localServer) await new Promise<void>(resolve=>localServer!.close(()=>resolve())); wsIngress.stop(); media?.close(); mediaTransport?.close(); feishuNetwork?.close(); await new Promise<void>(resolve => server.close(() => resolve())); await bridge.waitForIdle(); transport.close?.(); store.close(); })();
   return closing;
 }
 process.on('SIGTERM', () => { void shutdown(); }); process.on('SIGINT', () => { void shutdown(); });
 try {
   if(process.env.LOCAL_SOCKET_PATH) localServer=await startLocalSocket(process.env.LOCAL_SOCKET_PATH,bridge,personal!.owner);
   await wsIngress.start();
+  if (approvalDirectory && !closing) approvals = await startBoundApprovals({ directory: resolve(approvalDirectory), sender, owner: personal!.owner, binding: () => store.isRevoked(personal!.owner) ? undefined : store.binding(personal!.owner) });
+  if (closing) await approvals?.close();
   if (!closing) {
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(runtime.port, runtime.host, resolve); });
     if (!closing) {

@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "stateDirectory": "/ABSOLUTE/PRIVATE/claude-approval-state",
+  "owner": "EXISTING_BRIDGE_OWNER_ID",
+  "bindingId": "EXISTING_PERSONAL_P2P_BINDING_ID",
+  "requestTimeoutMs": 120000,
+  "transport": "existing-authenticated-bridge-ingress",
+  "sessionBypassDefault": false
+}
