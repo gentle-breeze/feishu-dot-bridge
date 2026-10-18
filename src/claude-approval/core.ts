@@ -3,7 +3,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 
 const id = z.string().min(1).max(256);
-export const hookSchema = z.object({ session_id: id, hook_event_name: z.enum(['PreToolUse','PermissionRequest']), tool_use_id: id.optional(), tool_name: id, tool_input: z.record(z.string(), z.unknown()), permission_mode: z.string().optional() });
+export const hookSchema = z.object({ session_id: id, hook_event_name: z.enum(['PreToolUse','PermissionRequest']), tool_use_id: id.optional(), invocation_id: z.string().uuid().optional(), tool_name: id, tool_input: z.record(z.string(), z.unknown()), permission_mode: z.string().optional() });
 export type Hook = z.infer<typeof hookSchema>;
 const answerSchema = z.object({ action: z.enum(['allow','deny','answers','bypass']), feedback: z.string().max(4000).optional(), answers: z.record(z.string(), z.union([z.string().min(1).max(4000), z.array(z.string().min(1).max(1000)).min(1).max(20)])).optional() }).strict();
 export type Answer = z.infer<typeof answerSchema>;
@@ -52,7 +52,8 @@ export class ApprovalStore {
     const serialized = JSON.stringify(h);
     if (Buffer.byteLength(serialized) > 48000) throw new Error('request_too_large');
     if (h.tool_name === 'AskUserQuestion') questions(h);
-    const fingerprint = createHash('sha256').update(h.session_id + ':' + (h.tool_use_id || serialized) + ':' + h.hook_event_name).digest('hex');
+    if (!h.tool_use_id && !h.invocation_id) throw new Error('invocation_id_required');
+    const fingerprint = createHash('sha256').update(h.session_id + ':' + (h.tool_use_id || h.invocation_id) + ':' + h.hook_event_name).digest('hex');
     const session = this.db.prepare('SELECT bypass FROM sessions WHERE id=?').get(h.session_id)!;
     const r = { id: randomUUID(), session: h.session_id, hook: h, expires: this.now() + ttl, state: 'pending', bypass: session.bypass === 1 };
     this.db.prepare('INSERT INTO requests VALUES(?,?,?,?,?,NULL,0,?)').run(r.id,r.session,serialized,r.expires,r.state,fingerprint);

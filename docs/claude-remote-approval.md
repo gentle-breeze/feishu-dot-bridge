@@ -75,7 +75,7 @@ if (result !== undefined) {
 
 ## 状态、安全与恢复
 
-* SQLite 原子决定/消费。request UUID、session UUID、工具调用 ID/内容指纹、消息 ID 共同防重放。相同 Hook 重试被拒绝，不重新询问；session UUID 从不复活。
+* SQLite 原子决定/消费。request UUID、session UUID、工具调用 ID/Hook invocation UUID、消息 ID 共同防重放。同一 invocation 的 IPC 重试被拒绝；PermissionRequest 原生没有 tool_use_id 时每次 Hook 进程生成 invocation UUID，相同内容的后续请求仍独立审批；session UUID 从不复活。
 * 拒绝可覆盖尚未被 Hook 消费的允许；已消费的批准不能撤回。先到拒绝不能被允许覆盖。
 * 默认等待 120 秒，最大 240 秒；Hook 本地等待上限 245 秒，Claude Hook timeout 260 秒。投递失败、格式损坏、未知 session、超时都不给 allow。超过卡片安全大小直接失败，不截断后批准。
 * 私有 Unix socket 位于 owner-only 0700 目录；不监听 TCP。锁文件防止多个 broker 启动并清空彼此状态。同一 macOS 用户的进程属于信任边界，不防御已控制该用户的恶意程序。
@@ -106,7 +106,7 @@ npm test
 ## 本次交付检查（2026-10-18）
 
 * TypeScript build、Python syntax、git diff whitespace 检查通过。
-* 审批专用 13 组测试全部通过，包含模拟完整链路、失败关闭、租约、双实例锁、宿主断线/绑定变更，以及使用假包装器验证 launcher 参数。没有调用真实 Claude 或飞书。
+* 审批专用 14 组测试全部通过，包含模拟完整链路、失败关闭、租约、双实例锁、宿主断线/绑定变更，以及使用假包装器验证 launcher 参数。没有调用真实 Claude 或飞书。
 * 完整回归首次执行 511 项：442 pass、58 skip、11 fail。11 项均为原有 macOS 图片启动/解码测试；补建 native 执行器并仅给测试进程设置已有 `FEISHU_MACOS_IMAGE_POLICY=resource-limits-only` 后，对应 73 项复测为 71 pass、2 fail。剩余两项 cloud-runtime 图片启动测试自行构造白名单环境，未传入该 macOS 策略；以 Git 基线 main 的独立编译副本运行也得到相同 2 fail（5 项中 3 pass）。未修改图片策略源码/生产环境，未把整套回归宣称为全绿。
 * 诊断分支不合并。本分支仅在 main.ts 加默认关闭的入口/生命周期接线（18 行增加、3 行删除），其余为本功能新增文件。整合诊断分支时需审阅 main.ts。
 

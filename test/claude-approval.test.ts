@@ -98,3 +98,10 @@ open(${JSON.stringify(record)},'w').write(json.dumps(sys.argv[1:]))
  const args=JSON.parse(readFileSync(record,'utf8')) as string[];assert.equal(args[args.indexOf('--permission-mode')+1],mode.length?'plan':'manual');assert.equal(args.includes('--allow-dangerously-skip-permissions'),!!mode.length);assert.equal(args.includes('--dangerously-skip-permissions'),false);assert.equal(service.store.db.prepare('SELECT count(*) AS n FROM sessions WHERE active=1').get()!.n,0);
  }}finally{await service.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('native PermissionRequest without tool_use_id allows repeated input as separate invocations',()=>{
+ const {s}=setup();const h=hook();delete h.tool_use_id;assert.throws(()=>s.create(h,1000));
+ h.invocation_id=randomUUID();const first=request(s,h);assert.throws(()=>s.create(h,1000));
+ const second=request(s,{...h,invocation_id:randomUUID()});assert.notEqual(first.id,second.id);
+ s.answer(first.id,sid,'first',{action:'allow'});assert.equal(s.consume(first.id,sid).done,true);assert.equal(s.consume(second.id,sid).done,false);s.close();
+});

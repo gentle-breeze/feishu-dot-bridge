@@ -6,6 +6,7 @@ import os
 import socket
 import sys
 import time
+import uuid
 
 class UnixHTTP(http.client.HTTPConnection):
     def __init__(self, path, timeout=3):
@@ -51,6 +52,7 @@ def main():
         path = os.environ['CLAUDE_APPROVAL_SOCKET']
         # Send only fields needed to decide, not transcript paths or environment.
         h = {k: h[k] for k in ('session_id','hook_event_name','tool_name','tool_input','tool_use_id','permission_mode') if k in h}
+        h['invocation_id'] = str(uuid.uuid4())
         response = call(path, '/hook', h)
         if response.get('guard') is True:
             return {}
