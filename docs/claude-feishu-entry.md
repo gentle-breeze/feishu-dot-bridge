@@ -31,7 +31,7 @@ claude-feishu --plan --model opus --prompt '请先提出计划'
 
 进程已有同名变量始终优先，包括空值；无效空值会报错而不从文件替换。五项都必须有效，避免会话中切换别名或调用子代理后落回未映射的 Claude 模型。文件不存在时可全部由进程环境提供；已有文件无法解析或 env 结构错误时失败关闭。错误仅指出键名，不打印配置内容/模型值。不会导入 model 字段、自定义模型菜单项、凭据、Hook、MCP、插件或其他设置，也不写回原文件。进程本来已有的环境变量保留，不负责清理或认证其内容。
 
-`--model` 接受 opus、sonnet、haiku、fable 或五项**合并后有效值**中的网关模型 ID。四个主模型映射需为具体网关 ID，不可递归指向内置别名或 `claude-…`。子代理可指向已映射别名或独立网关 ID。不传 --model 时，使用进程 ANTHROPIC_MODEL，其次 ANTHROPIC_DEFAULT_MODEL，再其次显式 sonnet；同样校验，不读取 settings.model，不覆盖已有模型变量。不支持 default/best 或未映射任意模型名。模型 ID 校验不是网关可用性探测。
+`--model` 接受 opus、sonnet、haiku、fable 、五项**合并后有效值**中的网关模型 ID，或直接 GPT/OpenAI 模型 ID（gpt-*、chatgpt-*、o 系列），例如 `--model gpt-6-astra`。直接 ID 不要求出现在五项映射中，不固定当前模型版本名单；只校验模型 token 格式，原样传给 GPTCC。四个主模型映射需为具体网关 ID，不可递归指向内置别名或 `claude-…`。子代理可指向已映射别名或独立网关 ID。不传 --model 时，使用进程 ANTHROPIC_MODEL，其次 ANTHROPIC_DEFAULT_MODEL，再其次显式 sonnet；同样校验，不读取 settings.model，不覆盖已有模型变量。不支持 default/best 或既未映射又不属于上述直接模型格式的名字。模型 ID 校验不是网关可用性探测。
 
 实现前只读核验发现当前文件只有上述 Haiku 精确键，另外四项缺失；未替用户补写或猜测。真实使用需在调用环境补齐有效映射，或由本人维护原有配置。不要把密钥放进示例或提交。
 
