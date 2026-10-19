@@ -2,6 +2,8 @@
 
 当前交互已升级为按钮/表单回调，参见 [卡片回调使用与恢复说明](claude-card-callbacks.md)。下方启动与隔离约束仍适用；旧 JSON 回复流程已禁用。
 
+日常命令入口与用户级安装见 [claude-feishu 说明](claude-feishu-entry.md)。该入口支持恢复 Claude 对话，每次仍使用新审批租约；此处历史验证记录中的“不支持恢复”已由入口说明更新。
+
 本功能为显式启用的 Bridge 扩展，提供 Claude Code CLI 的 PermissionRequest、AskUserQuestion（PreToolUse）和 ExitPlanMode 交互。默认不启用生产接入，不创建凭据、不修改全局 Claude 配置、不启动第二个飞书 WebSocket 消费者、不修改订阅或定时任务。
 
 ## 启动与本地模拟
