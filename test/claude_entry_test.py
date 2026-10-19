@@ -95,6 +95,31 @@ class EntryTests(unittest.TestCase):
                 r=self.run_cmd([entry])
                 self.assertEqual(r.returncode,2)
                 self.assertIn(key,r.stderr)
+    def test_direct_openai_ids_and_selection_priority(self):
+        entry=self.fake_launch()
+        for model in ['gpt-6-astra','gpt-future-release','chatgpt-future-latest','o3','o42-future']:
+            with self.subTest(model=model):
+                r=self.run_cmd([entry,'--model='+model])
+                self.assertEqual(r.returncode,23,r.stderr)
+                args=json.loads(self.record.read_text())['args']
+                self.assertIn('--model='+model,args)
+        self.env['ANTHROPIC_DEFAULT_MODEL']='gpt-future-default'
+        self.assertEqual(self.run_cmd([entry]).returncode,23)
+        self.assertEqual(json.loads(self.record.read_text())['args'][-1],'gpt-future-default')
+        self.env['ANTHROPIC_MODEL']='gpt-6-astra'
+        self.assertEqual(self.run_cmd([entry]).returncode,23)
+        self.assertEqual(json.loads(self.record.read_text())['args'][-1],'gpt-6-astra')
+        self.assertEqual(self.run_cmd([entry,'--model','chatgpt-explicit']).returncode,23)
+        data=json.loads(self.record.read_text())
+        self.assertEqual(data['args'][-1],'chatgpt-explicit')
+        self.assertEqual(data['env']['ANTHROPIC_MODEL'],'gpt-6-astra')
+        for model in ['gpt-','chatgpt-','o','gpt-x --permission-mode=bypassPermissions','gpt-x\n--settings=x','gpt-$(command)','--settings=x']:
+            self.assertEqual(self.run_cmd([entry,'--model='+model]).returncode,2)
+        for args in [['--permission-mode=bypassPermissions'],['--settings=x'],['--setting-sour=user'],['--mcp-config=x'],['-pc'],['--print'],['--','--settings=x']]:
+            self.assertEqual(self.run_cmd([entry,'--model=gpt-6-astra',*args]).returncode,2)
+        # Direct IDs never bypass the existing five-key requirements.
+        self.env[KEYS[0]]=''
+        self.assertEqual(self.run_cmd([entry,'--model=gpt-6-astra']).returncode,2)
     def test_missing_launcher(self):
         entry=self.fake_launch()
         entry.with_name('launch.py').unlink()

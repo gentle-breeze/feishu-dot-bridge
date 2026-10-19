@@ -2,6 +2,7 @@
 """Run the repository approval launcher with only five model settings imported."""
 import json
 import os
+import re
 from pathlib import Path
 import sys
 
@@ -17,6 +18,10 @@ MODEL_KEYS = {
     'fable': 'ANTHROPIC_DEFAULT_FABLE_MODEL',
     'subagent': 'CLAUDE_CODE_SUBAGENT_MODEL',
 }
+
+# GPTCC routes these model families to OpenAI/Codex. Validate a model token,
+# not a release catalog; upstream decides which concrete IDs are available.
+DIRECT_OPENAI_MODEL = re.compile(r'(?:gpt-|chatgpt-)[A-Za-z0-9][A-Za-z0-9._/-]*|o[1-9][0-9]*(?:[-.][A-Za-z0-9][A-Za-z0-9._/-]*)?')
 
 
 def prepare(argv):
@@ -56,8 +61,8 @@ def prepare(argv):
             raise ValueError('Invalid subagent gateway mapping: CLAUDE_CODE_SUBAGENT_MODEL')
         allowed.add(sub)
     selected = a.model if a.model is not None else env.get('ANTHROPIC_MODEL', env.get('ANTHROPIC_DEFAULT_MODEL', 'sonnet'))
-    if selected not in allowed:
-        raise ValueError('Selected model must be a mapped alias or an effective gateway model ID')
+    if selected not in allowed and not DIRECT_OPENAI_MODEL.fullmatch(selected):
+        raise ValueError('Selected model must be a mapped alias, an effective gateway model ID, or a direct GPT/OpenAI model ID')
     args = [sys.executable, str(launch), '--state-dir', str(Path.home() / '.claude-feishu-approval'), *argv]
     if a.model is None:
         args += ['--model', selected]
