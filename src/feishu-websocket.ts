@@ -47,7 +47,7 @@ export class FeishuWebSocketIngress {
   private started = false;
   private startupFailed = false;
   private rejectStartup?: (error: Error) => void;
-  constructor(private apps: FeishuApp[], private receive: (message: Inbound) => unknown, private options: { factory?: WebSocketFactory; network?: FeishuNetwork; notice?: (event: WebSocketNotice) => void; startupTimeoutMs?: number; onTerminalFailure?: () => void; mediaEnabled?: boolean } = {}) {}
+  constructor(private apps: FeishuApp[], private receive: (message: Inbound) => unknown, private options: { factory?: WebSocketFactory; network?: FeishuNetwork; notice?: (event: WebSocketNotice) => void; startupTimeoutMs?: number; onTerminalFailure?: () => void; mediaEnabled?: boolean; cardAction?: (app:FeishuApp,data:unknown)=>unknown } = {}) {}
   private notify(event: WebSocketNotice): void { try { this.options.notice?.(event); } catch { /* Logs cannot alter lifecycle cleanup. */ } }
   start(): Promise<void> {
     if (this.stopped) return Promise.reject(new BridgeError('ws_ingress_stopped'));
@@ -94,7 +94,11 @@ export class FeishuWebSocketIngress {
       try {
         entry.client = factory(entry.app, hooks);
         const dispatcher = new lark.EventDispatcher({ logger: silentLarkLogger }).register({
-          'im.message.receive_v1': authenticatedWebSocketMessageHandler(entry.app, this.receive, { active: () => !this.stopped && entry.ready, notice, mediaEnabled: this.options.mediaEnabled })
+          'im.message.receive_v1': authenticatedWebSocketMessageHandler(entry.app, this.receive, { active: () => !this.stopped && entry.ready, notice, mediaEnabled: this.options.mediaEnabled }),
+          ...(this.options.cardAction ? { 'card.action.trigger': (data:unknown) => {
+            if(this.stopped || !entry.ready)return {};
+            return this.options.cardAction!(entry.app,data);
+          } } : {})
         });
         entry.timer = setTimeout(() => reject(new BridgeError('ws_start_timeout')), this.options.startupTimeoutMs ?? this.options.network?.startupTimeoutMs ?? 15000);
         notice('ws_connecting');

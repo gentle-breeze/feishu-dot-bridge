@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { ApprovalStore, type Hook } from '../src/claude-approval/core.js';
+import { ApprovalStore, type Hook, type Request } from '../src/claude-approval/core.js';
 import { BoundFeishuApproval, card } from '../src/claude-approval/adapter.js';
 import { serveApprovals } from '../src/claude-approval/server.js';
 import type { Binding, Inbound } from '../src/types.js';
@@ -48,19 +48,21 @@ test('single, multiple, free answers map by exact question; missing/duplicate qu
 test('restart invalidates pending requests and old sessions durably',()=>{
  const dir=mkdtempSync(join(tmpdir(),'approval-test-'));try{const path=join(dir,'db');const first=new ApprovalStore(path);first.register(sid,false);const r=request(first);first.db.close();const second=new ApprovalStore(path);assert.equal(second.active(sid),false);assert.throws(()=>second.register(sid,false));assert.throws(()=>second.consume(r.id,sid));second.close();}finally{rmSync(dir,{recursive:true,force:true});}
 });
+function click(r:Request,action='allow',form:Record<string,unknown>={}) {return {event_type:'card.action.trigger',event_id:randomUUID(),create_time:String(Date.now()*1000),app_id:b.appId,tenant_key:b.tenantKey,operator:{open_id:b.openId,tenant_key:b.tenantKey},host:'im_message',context:{open_message_id:'message_'+r.id,open_chat_id:b.chatId},action:{tag:'button',name:'act_'+action,value:{kind:'claude_approval_v1',request:r.id,session:r.session,action},form_value:form}};}
 const b:Binding={id:'binding',owner:'owner',active:1,appId:'app',tenantKey:'tenant',openId:'me',chatId:'private'};
-test('authenticated bound reply rejects other users/chats/apps, old events; cards preserve raw plain text',async()=>{
- const {s}=setup();const r=s.create(hook(),1000);let sent:any;const a=new BoundFeishuApproval(s,{async reply(){},async sendCard(_app,_chat,c){sent=c;return 'message';}},()=>b,'owner');await a.send(r);s.delivered(r.id);assert.equal(sent.elements[1].text.tag,'plain_text');
- const m:Inbound={...b,messageId:'msg',timestamp:new Date().toISOString(),text:'/claude '+JSON.stringify({request:r.id,session:sid,action:'allow'})};
- for(const bad of [{openId:'other'},{chatId:'group'},{appId:'wrong'},{tenantKey:'other'}])assert.equal(a.receive({...m,...bad}),'wrong_identity');
- assert.equal(a.receive({...m,timestamp:'bad'}),'stale_event');assert.equal(a.receive(m),'accepted');assert.equal(a.receive(m),'duplicate_event');a.disconnected();assert.throws(()=>s.consume(r.id,sid));s.close();
+test('bound callbacks reject other identities and stale events; legacy text never approves',async()=>{
+ const {s}=setup();const r=s.create(hook(),1000);let sent:any;
+ const a=new BoundFeishuApproval(s,{async reply(){},async patchCard(){},async sendCard(_app,_chat,c){sent=c;return 'message_'+r.id;}},()=>b,'owner');await a.send(r);s.delivered(r.id);assert.equal(sent.schema,'2.0');
+ const e=click(r);for(const bad of [{app_id:'wrong'},{tenant_key:'wrong'},{operator:{open_id:'other',tenant_key:b.tenantKey}},{context:{open_message_id:'wrong',open_chat_id:b.chatId}},{create_time:'1000000000000000'}])assert.equal((a.receiveCard({...e,...bad}) as any).toast.type,'error');
+ assert.equal(a.receive({...b,messageId:'msg',timestamp:new Date().toISOString(),text:'/claude {}'}),'use_card_controls');
+ assert.equal((a.receiveCard(e) as any).toast.type,'success');assert.equal((a.receiveCard(e) as any).toast.type,'error');a.disconnected();assert.throws(()=>s.consume(r.id,sid));s.close();
 });
 test('oversized remote detail is not truncated into an approvable card',()=>{const {s}=setup();const h=hook();h.tool_input={content:'x'.repeat(19000)};assert.throws(()=>card(request(s,h)));s.close();});
 function pythonHook(socket:string,h:unknown){return new Promise<any>((resolveResult,reject)=>{const p=spawn('/usr/bin/python3',[resolve('scripts/claude-approval/hook.py')],{env:{...process.env,CLAUDE_APPROVAL_SOCKET:socket,CLAUDE_APPROVAL_SESSION:sid},stdio:['pipe','pipe','pipe']});let out='';p.stdout.on('data',x=>out+=x);p.on('error',reject);p.on('exit',code=>{try{assert.equal(code,0);resolveResult(JSON.parse(out));}catch(e){reject(e);}});p.stdin.end(JSON.stringify(h));});}
 test('end-to-end Python Hook → Unix broker → simulated bound Feishu reply → Claude result',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'approval-e2e-'));let adapter:BoundFeishuApproval;const service=await serveApprovals(dir,store=>{
- adapter=new BoundFeishuApproval(store,{async reply(){},async sendCard(){return 'mock';}},()=>b,'owner');
- return {async send(r){await adapter.send(r);setTimeout(()=>{const answer=r.hook.tool_name==='AskUserQuestion'?{action:'answers',answers:{'Color?':'Blue'}}:{action:'allow'};assert.equal(adapter.receive({...b,messageId:randomUUID(),timestamp:new Date().toISOString(),text:'/claude '+JSON.stringify({request:r.id,session:r.session,...answer})}),'accepted');},20);}};
+ let sendingId='';adapter=new BoundFeishuApproval(store,{async reply(){},async patchCard(){},async sendCard(){return 'message_'+sendingId;}},()=>b,'owner');
+ return {async send(r){sendingId=r.id;await adapter.send(r);setTimeout(()=>{assert.equal((adapter.receiveCard(click(r,r.hook.tool_name==='AskUserQuestion'?'answers':'allow',r.hook.tool_name==='AskUserQuestion'?{q0:'0'}:{})) as any).toast.type,'success');},20);}};
  },1000);
  try {service.store.register(sid,false);
  const h=hook('ExitPlanMode');h.tool_input={plan:'original',planFilePath:'/tmp/p'};const out=await pythonHook(service.socket,h);assert.deepEqual(out.hookSpecificOutput.decision.updatedInput,h.tool_input);
@@ -83,7 +85,7 @@ test('host extension cancels on disconnect/binding change and reuses existing se
  const {startBoundApprovals}=await import('../src/claude-approval/host.js');
  const dir=mkdtempSync(join(tmpdir(),'approval-host-'));let binding:Binding|undefined=b;
  const host=await startBoundApprovals({directory:dir,sender:{async reply(){},async sendCard(){return 'mock';}},binding:()=>binding,owner:'owner'});
- try{host.disconnected();host.reconnected();binding=undefined;host.bindingChanged();await assert.rejects(async()=>host.receiveAuthenticated({...b,messageId:'x',timestamp:new Date().toISOString(),text:'/claude {}'}));}finally{await host.close();await host.close();rmSync(dir,{recursive:true,force:true});}
+ try{host.disconnected();host.reconnected();binding=undefined;host.bindingChanged();assert.equal(host.receiveAuthenticated({...b,messageId:'x',timestamp:new Date().toISOString(),text:'/claude {}'}),'use_card_controls');}finally{await host.close();await host.close();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('launcher uses only claude-gptcc with safe default and explicit plan availability',async()=>{
