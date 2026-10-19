@@ -58,7 +58,10 @@ export class BoundFeishuApproval implements ApprovalAdapter {
       // Network patching is deliberately outside the callback's 3 second budget.
       // Persisted status is applied by the serialized outbox worker.
       return result==='accepted'?toast(answer.action==='deny'?'已拒绝，原卡片即将更新':'已记录，原卡片即将更新',true):toast(result==='expired'?'请求已过期':'请求未接受或已处理，请勿重复点击');
-    } catch { return toast('表单不完整或会话失效，未执行'); }
+    } catch(error) {
+      if(error instanceof Error && error.message==='invalid_selection_count')return toast('单选题请只勾选一项，多选题至少勾选一项；也可填写自由回答。未提交，请检查后重试');
+      return toast('表单不完整或会话失效，未执行');
+    }
   }
   flushUpdates():Promise<void> {
     if(this.flushing)return this.flushing;

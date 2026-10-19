@@ -43,3 +43,13 @@ node --test dist/test/claude-approval.test.js dist/test/claude-card-callbacks.te
 新增测试覆盖：权限按钮和状态卡；多问题/单多选/自由输入映射；计划意见及拒绝优先；错误身份/租户/聊天/原消息/请求/会话/按钮/过期事件/bypass；跨请求消息去重；无人点击的到期更新；patch 失败重试；重启恢复与换绑隔离；工具文本转义；真实 SDK dispatcher 的回调响应与正常聊天隔离。既有 Python Hook→Unix broker→模拟回调链路和启动器测试继续运行。
 
 没有真实飞书发送/点击，也没有新版本真实 Claude 运行。尚未实测飞书桌面/移动端外观、生产应用回调订阅/网络时延、真实 API 更新、真实回调重推，以及 Claude 原生失败兜底。Hook 被 SIGKILL 或硬超时不能靠本功能保证所有原生行为，仍依赖平台隔离与 Claude 策略。
+
+## 平铺问题卡片（2026-10-19）
+
+已核验官方 [JSON 2.0 组件列表](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/component-json-v2-overview)、[勾选器](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/checker) 和 [表单容器](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/containers/form-container) 正文。组件列表没有原生 radio 组；select_static 的 type 只定义边框样式，不能当作平铺模式。checker 明确支持嵌套 form、唯一 name、布尔 checked；不配置 behaviors 时只改变本地状态。form 的提交按钮一次回传各组件 name/value。
+
+现在每个选项使用一行 checker，标签及说明均为 plain_text，不解释链接或提及。全部问题和自由输入仍在一个表单内，仅提交按钮携带审批回调。按上述组件/表单协议组合，解析器只接受以组件 name 为键的布尔勾选值，缺省项视为未选；字符串等异常类型拒绝。官方表单示例未单独展示 checker 字段，真实客户端的最终回传及外观仍需上线前实测；如类型不符合预期，服务端拒绝，不猜测或自动批准。
+
+单选题没有假设客户端互斥：文案明确要求只勾选一项，提交时服务端强制恰好一项，否则 toast 提示检查重试。多选题至少一项；填写非空自由回答仍优先使用文本。旧下拉卡片的回传格式继续受校验支持，但不得与新勾选字段混合。
+
+只移除 AskUserQuestion 已逐项展示的重复 JSON；题目、header、选项说明和其他未知补充字段保留。普通工具及计划审批仍完整展示原输入，命令、路径、文件内容不隐藏、不截断。原有大小限制、绑定、消息/会话关联、过期、防重放、拒绝优先及状态更新不变。新增回归覆盖布尔勾选、多问题统一提交、错误类型、单选多勾、未知字段、两种格式混用、非提交事件拒绝、说明去重以及命令/路径保留。本次未发送真实卡片或启用生产。
