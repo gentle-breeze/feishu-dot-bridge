@@ -5,17 +5,28 @@ const plain=(content:string)=>({tag:'plain_text',content});
 const escaped=(text:string)=>text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/[\\`*_{}\[\]()#+.!|~-]/g,'\\$&');
 const text=(content:string)=>({tag:'markdown',content:escaped(content)});
 const base=(title:string,elements:unknown[])=>({schema:'2.0',config:{update_multi:true,enable_forward:false},header:{title:plain(title)},body:{elements}});
-const qsSchema=z.array(z.object({question:z.string(),multiSelect:z.boolean().optional(),options:z.array(z.object({label:z.string(),description:z.string().optional()}))}));
+const qsSchema=z.array(z.object({question:z.string(),header:z.string().optional(),multiSelect:z.boolean().optional(),options:z.array(z.object({label:z.string(),description:z.string().optional()}).passthrough())}).passthrough());
+const extra=(value:Record<string,unknown>,known:string[])=>Object.fromEntries(Object.entries(value).filter(([k])=>!known.includes(k)));
 export function card(r:Request) {
   const detail=JSON.stringify(r.hook.tool_input,null,2);
   if(Buffer.byteLength(detail)>18000)throw new Error('card_too_large_review_locally');
   const button=(action:string,label:string,submit=false)=>({tag:'button',name:`act_${action}`,text:plain(label),type:action==='deny'?'danger':'primary',...(submit?{form_action_type:'submit'}:{}),behaviors:[{type:'callback',value:{kind:'claude_approval_v1',request:r.id,session:r.session,action}}]});
-  const elements:unknown[]=[text(`项目目录：${r.hook.cwd || '未提供项目目录'}\n会话：${r.session}\n请求：${r.id}\n截止：${new Date(r.expires).toISOString()}\n请求摘要：${r.hook.tool_name}\n以下内容由工具提交，请审阅后决定。`),text(detail)];
+  const elements:unknown[]=[text(`项目目录：${r.hook.cwd || '未提供项目目录'}\n会话：${r.session}\n请求：${r.id}\n截止：${new Date(r.expires).toISOString()}\n请求摘要：${r.hook.tool_name}\n以下内容由工具提交，请审阅后决定。`)];
+  // Only remove question data rendered below. Other tool inputs (including
+  // commands, paths, plans and unknown question metadata) remain reviewable.
+  const remaining=r.hook.tool_name==='AskUserQuestion'?extra(r.hook.tool_input,['questions']):r.hook.tool_input;
+  if(Object.keys(remaining).length)elements.push(text(JSON.stringify(remaining,null,2)));
   if(r.hook.tool_name==='AskUserQuestion') {
     const fields:unknown[]=[];
     for(const [index,q] of qsSchema.parse(r.hook.tool_input.questions).entries()) {
-      fields.push(text(`${index+1}. ${q.question}${q.multiSelect?'（多选）':'（单选）'}`));
-      fields.push({tag:q.multiSelect?'multi_select_static':'select_static',name:`q${index}`,placeholder:plain('请选择，或在下方填写其他答案'),options:q.options.map((o,i)=>({text:plain(o.label),value:String(i)})),required:false});
+      fields.push(text(`${index+1}. ${q.header?`${q.header}：`:''}${q.question}${q.multiSelect?'（可勾选多项）':'（请只勾选一项；多选时提交会提示重选）'}`));
+      const metadata=extra(q,['question','header','multiSelect','options']);
+      if(Object.keys(metadata).length)fields.push(text(JSON.stringify(metadata,null,2)));
+      for(const [i,o] of q.options.entries()) {
+        fields.push({tag:'checker',name:`q${index}_o${i}`,checked:false,text:plain(o.label+(o.description?`\n${o.description}`:'')),checked_style:{show_strikethrough:false,opacity:1}});
+        const optionMetadata=extra(o,['label','description']);
+        if(Object.keys(optionMetadata).length)fields.push(text(JSON.stringify(optionMetadata,null,2)));
+      }
       fields.push({tag:'input',name:`free${index}`,placeholder:plain('其他 / 自由回答（填写后优先采用此内容）'),max_length:1000,input_type:'multiline_text'});
     }
     fields.push(button('answers','提交全部答案',true));
@@ -40,14 +51,18 @@ export function formAnswer(r:Request,action:'allow'|'deny'|'answers',form:Record
   if(action!=='answers')throw new Error('answers_required');
   const answers:Record<string,string|string[]>={};
   const qs=qsSchema.parse(r.hook.tool_input.questions);
-  const keys=new Set(qs.flatMap((_,i)=>[`q${i}`,`free${i}`]));
+  // Old in-flight dropdown cards can still submit, but formats cannot be mixed.
+  const legacy=qs.some((_,i)=>Object.hasOwn(form,`q${i}`));
+  const keys=new Set(qs.flatMap((q,i)=>[`free${i}`,...(legacy?[`q${i}`]:q.options.map((_,j)=>`q${i}_o${j}`))]));
   if(Object.keys(form).some(k=>!keys.has(k)))throw new Error('unexpected_field');
+  if(!legacy && Object.entries(form).some(([k,v])=>!k.startsWith('free') && typeof v!=='boolean'))throw new Error('invalid_checked_value');
   for(const [i,q] of qs.entries()) {
     const free=form[`free${i}`];
     if(free!==undefined && typeof free!=='string')throw new Error('invalid_free_text');
     if(typeof free==='string' && free.trim()) { answers[q.question]=z.string().trim().min(1).max(1000).parse(free);continue; }
     const selected=form[`q${i}`];
-    const indices=q.multiSelect?z.array(z.string()).min(1).max(20).parse(selected):[z.string().parse(selected)];
+    const indices=legacy?(q.multiSelect?z.array(z.string()).min(1).max(20).parse(selected):[z.string().parse(selected)]):q.options.flatMap((_,j)=>form[`q${i}_o${j}`]===true?[String(j)]:[]);
+    if(!indices.length || (!q.multiSelect && indices.length!==1))throw new Error('invalid_selection_count');
     if(new Set(indices).size!==indices.length)throw new Error('duplicate_option');
     const labels=indices.map(v=>{if(!/^(0|[1-9]\d*)$/.test(v)||!q.options[Number(v)])throw new Error('unknown_option');return q.options[Number(v)]!.label;});
     answers[q.question]=q.multiSelect?labels:labels[0]!;

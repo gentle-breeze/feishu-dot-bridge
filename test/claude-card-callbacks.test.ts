@@ -33,7 +33,7 @@ test('permission buttons, project/session summary, no JSON commands or bypass; t
  }finally{await f.a.stop();f.s.close();}
 });
 test('one form submits multi-question single/multiple/free values with exact mapping',async()=>{
- const f=fixture();try{const r=await f.create('AskUserQuestion',questions);const json=JSON.stringify(f.sends[0]);assert.match(json,/multi_select_static/);assert.match(json,/select_static/);assert.match(json,/提交全部答案/);
+ const f=fixture();try{const r=await f.create('AskUserQuestion',questions);const json=JSON.stringify(f.sends[0]);assert.match(json,/checker/);assert.ok(!json.includes("select_static"));assert.match(json,/提交全部答案/);
  const bad=[{q0:'2',q1:['0'],free2:'free'},{q0:['0'],q1:['0'],free2:'free'},{q0:'0',q1:['0','0'],free2:'free'},{q0:'0',q1:['0']},{q0:'0',q1:['0'],free2:'free',injected:'bad'}];for(const v of bad)assert.ok(!ok(f.a.receiveCard(event(r,'answers',v))));assert.equal(f.s.consume(r.id,r.session).done,false);
  assert.ok(ok(f.a.receiveCard(event(r,'answers',{q0:'0',q1:['0','1'],q2:'0',free2:'custom note'}))));const out=f.s.consume(r.id,r.session).result as any;assert.deepEqual(out.hookSpecificOutput.updatedInput.answers,{'Color?':'Blue','Fruits?':'Apple, Pear','Note?':'custom note'});
  }finally{await f.a.stop();f.s.close();}
@@ -82,4 +82,26 @@ test('card persistence failure rolls back approval and event receipt atomically'
 
 test('standalone button callback may omit form-only name; form submission requires its name',async()=>{
  const f=fixture();try{const r=await f.create(),e=event(r);const {name,...action}=e.action;assert.ok(ok(f.a.receiveCard({...e,action})));const q=await f.create('AskUserQuestion',questions),qe=event(q,'answers',{q0:'0',q1:['0'],free2:'ok'});const {name:formName,...formAction}=qe.action;assert.ok(!ok(f.a.receiveCard({...qe,action:formAction})));}finally{await f.a.stop();f.s.close();}
+});
+
+test('flat checkers show descriptions once, submit all questions and retain extra review data',async()=>{
+ const f=fixture();try{
+ const input={questions:[{header:'颜色',question:'Choose color',options:[{label:'Blue',description:'Use blue for this project'},{label:'Green',description:'Use green instead'}]},{question:'Pick fruits',multiSelect:true,options:[{label:'Apple'},{label:'Pear'}]},{question:'Your note',options:[{label:'Default'}]}]};
+ const r=await f.create('AskUserQuestion',input);const c=card(r) as any;const json=JSON.stringify(c);
+ assert.ok(!json.includes('"questions"'));assert.ok(!json.includes('"options"'));assert.ok(!json.includes('select_static'));assert.equal(json.split('Use blue for this project').length-1,1);
+ const form=c.body.elements.find((x:any)=>x.tag==='form');const checks=form.elements.filter((x:any)=>x.tag==='checker');assert.equal(checks.length,5);assert.equal(new Set(checks.map((x:any)=>x.name)).size,5);assert.ok(checks.every((x:any)=>x.checked===false && !x.behaviors));
+ const valid={q0_o0:true,q0_o1:false,q1_o0:true,q1_o1:true,free2:'custom note'};
+ assert.match((f.a.receiveCard(event(r,'answers',{...valid,q0_o1:true})) as any).toast.content,/单选题请只勾选一项/);
+ assert.deepEqual(formAnswer(r,'answers',{free0:'other color',q1_o0:false,free1:'other fruit',free2:'note'}),{action:'answers',answers:{'Choose color':'other color','Pick fruits':'other fruit','Your note':'note'}});
+ for(const bad of [{...valid,q0_o1:true},{...valid,q0_o0:false},{...valid,q0_o0:'true'},{...valid,q9_o0:true},{...valid,q0:'0'},{...valid,q0_o0:1}])assert.ok(!ok(f.a.receiveCard(event(r,'answers',bad))));
+ const toggle=event(r,'answers',valid);toggle.action.tag='checker';assert.ok(!ok(f.a.receiveCard(toggle)));assert.equal(f.s.consume(r.id,r.session).done,false);
+ const submit=event(r,'answers',valid);assert.ok(ok(f.a.receiveCard(submit)));assert.ok(!ok(f.a.receiveCard(submit)));
+ const out=f.s.consume(r.id,r.session).result as any;assert.deepEqual(out.hookSpecificOutput.updatedInput.answers,{'Choose color':'Blue','Pick fruits':'Apple, Pear','Your note':'custom note'});
+ const more=card({...r,hook:{...r.hook,tool_input:{command:'inspect /tmp/important',questions:[{...input.questions[0],context_path:'/tmp/context',options:[{label:'One',description:'<at id=all>',target_path:'/tmp/target'}]}]}}});
+ const moreJson=JSON.stringify(more);for(const value of ['important','context','target'])assert.ok(moreJson.includes(value));assert.ok(moreJson.includes('"tag":"plain_text","content":"One\\n<at id=all>"'));
+ }finally{await f.a.stop();f.s.close();}
+});
+
+test('tool execution and plan review keep full commands, paths and input values',async()=>{
+ const f=fixture();try{for(const [tool,input] of [['Bash',{command:'ls /tmp/review',timeout:5000}],['Write',{file_path:'/tmp/output',content:'full file content'}],['ExitPlanMode',{plan:'review this plan',planFilePath:'/tmp/plan'}]] as const){const r=await f.create(tool,input);const c=card(r) as any;const rendered=c.body.elements.filter((x:any)=>x.tag==='markdown').map((x:any)=>x.content).join('\n');for(const value of Object.values(input))assert.ok(rendered.includes(String(value)));}}finally{await f.a.stop();f.s.close();}
 });
