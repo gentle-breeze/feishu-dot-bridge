@@ -20,7 +20,7 @@ node dist/scripts/claude-approval/mock.js /tmp/my-private-approval
 python3 scripts/claude-approval/launch.py --state-dir /tmp/my-private-approval --prompt '请先提出计划，并询问我一个选择问题'
 ```
 
-mock 会输出卡片和 request/session UUID。把卡片中的 JSON 对象（不带 `/claude ` 前缀）粘贴到 mock 终端 stdin，即模拟用户回答。这不是实际飞书认证或投递。
+mock 会输出卡片和 request/session UUID。在 mock 终端 stdin 输入 `{"request":"输出的请求 UUID","session":"输出的会话 UUID","action":"deny"}` 模拟拒绝，或把 action 改为 allow 模拟允许。问题使用 action=answers 及按问题原文为键的 answers 对象。这是绕过飞书传输的本地开发控制器，不是实际飞书认证或投递；完整卡片回调映射由隔离测试覆盖。
 
 正常模式显式传 `--permission-mode manual`，防止现有包装器自行添加默认 bypass。`--plan` 从计划模式开始。入口只接受这些明确参数和 prompt，不支持注入其他 CLI 权限参数、恢复旧会话或任意 executable。
 
