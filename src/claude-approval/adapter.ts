@@ -1,41 +1,83 @@
 import { z } from 'zod';
 import type { Binding, FeishuSender, Inbound } from '../types.js';
-import { ApprovalStore, type Request } from './core.js';
-
+import { ApprovalStore, bindingIdentity, type Request } from './core.js';
+import { card, formAnswer, terminalCard } from './cards.js';
+export { card } from './cards.js';
 export interface ApprovalAdapter { send(request: Request): Promise<void> }
-/** Bind this only to the host Bridge's current owner binding and authenticated
- * ingress. This is deliberately not an endpoint accepting caller-supplied identity. */
+const id=z.string().min(1).max(256);
+const callbackSchema=z.object({
+  event_type:z.literal('card.action.trigger'),event_id:id,create_time:z.string().regex(/^\d{16}$/),app_id:id,tenant_key:id,
+  operator:z.object({open_id:id,tenant_key:id}),host:z.literal('im_message'),
+  context:z.object({open_message_id:id,open_chat_id:id}),
+  action:z.object({tag:z.literal('button'),name:z.string().optional(),value:z.object({kind:z.literal('claude_approval_v1'),request:z.string().uuid(),session:z.string().uuid(),action:z.enum(['allow','deny','answers'])}).strict(),form_value:z.record(z.string(),z.unknown()).optional()})
+});
+const toast=(content:string,ok=false)=>({toast:{type:ok?'success':'error',content}});
+/** ONLY call from the existing SDK dispatcher on the authenticated app WS.
+ * No HTTP/raw-JSON endpoint is exposed. IDs alone are not authentication. */
 export class BoundFeishuApproval implements ApprovalAdapter {
+  private stopped=false;
+  private sending=new Set<Promise<void>>();
+  private flushing?:Promise<void>;
   constructor(private store: ApprovalStore, private sender: FeishuSender, private binding: () => Binding | undefined, private owner: string) {}
   private current() { const b = this.binding(); if (!b || !b.active || b.owner !== this.owner) throw new Error('binding_unavailable'); return b; }
-  async send(r: Request) {
-    const b = this.current();
-    if (!this.sender.sendCard) throw new Error('card_transport_unavailable');
-    await this.sender.sendCard(b.appId,b.chatId,card(r),r.id);
+  send(r:Request):Promise<void> {
+    const task=this.sendOnce(r);this.sending.add(task);
+    void task.finally(()=>this.sending.delete(task)).catch(()=>{});return task;
   }
-  receive(m: Inbound): string | undefined {
-    if (!m.text.startsWith('/claude ')) return undefined;
+  private async sendOnce(r: Request) {
+    if(this.stopped)throw new Error('adapter_stopped');
     const b = this.current();
-    if (m.appId !== b.appId || m.tenantKey !== b.tenantKey || m.openId !== b.openId || m.chatId !== b.chatId || m.contentStatus) return 'wrong_identity';
-    const age = Date.now() - Date.parse(m.timestamp);
-    if (!Number.isFinite(age) || age < -30000 || age > 300000) return 'stale_event';
+    if (!this.sender.sendCard || !this.sender.patchCard) throw new Error('card_transport_unavailable');
+    const message=await this.sender.sendCard(b.appId,b.chatId,card(r),r.id);
+    this.store.cardSent(r,b,message);
+  }
+  // Legacy JSON replies are consumed but cannot grant approval or leak into dot.
+  receive(m: Inbound): string | undefined { return m.text.startsWith('/claude ')?'use_card_controls':undefined; }
+  receiveCard(raw:unknown) {
     try {
-      const payload = z.object({ request: z.string().uuid(), session: z.string().uuid(), action: z.string(), answers: z.unknown().optional(), feedback: z.string().optional() }).strict().parse(JSON.parse(m.text.slice(8)));
-      const { request, session, ...answer } = payload;
-      return this.store.answer(request,session,m.messageId,answer);
-    } catch { return 'invalid_reply'; }
+      if(!z.object({action:z.object({value:z.object({kind:z.literal('claude_approval_v1')})})}).safeParse(raw).success)return {};
+      if(this.stopped)return toast('审批服务已停止，未执行');
+      if(Buffer.byteLength(JSON.stringify(raw))>64000)return toast('回调过大，未执行');
+      const parsed=callbackSchema.safeParse(raw);
+      if(!parsed.success)return toast('无效回调，未执行');
+      const e=parsed.data,b=this.current(),v=e.action.value;
+      if(e.action.name!==undefined && e.action.name!==`act_${v.action}`)return toast('按钮不匹配，未执行');
+      const age=Date.now()-Number(e.create_time)/1000;
+      if(age < -30000 || age>300000)return toast('回调已过期，未执行');
+      if(e.app_id!==b.appId || e.tenant_key!==b.tenantKey || e.operator.tenant_key!==b.tenantKey || e.operator.open_id!==b.openId || e.context.open_chat_id!==b.chatId)return toast('身份或私聊不匹配，未执行');
+      this.store.reconcileCards();
+      const c=this.store.cardRecord(v.request);
+      if(!c || c.session!==v.session || c.message!==e.context.open_message_id || c.binding!==JSON.stringify(bindingIdentity(b)))return toast('卡片归属不匹配，未执行');
+      if(c.desired==='expired')return toast('请求已过期，请重新发起');
+      const r=this.store.requestForCard(v.request);
+      if(!r)return toast('请求已处理，请勿重复点击');
+      const submittingForm=v.action==='answers' || (r.hook.tool_name==='ExitPlanMode' && v.action==='deny');
+      if(submittingForm && e.action.name!==`act_${v.action}`)return toast('表单按钮不匹配，未执行');
+      const answer=formAnswer(r,v.action,e.action.form_value || {});
+      const result=this.store.answer(v.request,v.session,e.event_id,answer);
+      // Network patching is deliberately outside the callback's 3 second budget.
+      // Persisted status is applied by the serialized outbox worker.
+      return result==='accepted'?toast(answer.action==='deny'?'已拒绝，原卡片即将更新':'已记录，原卡片即将更新',true):toast(result==='expired'?'请求已过期':'请求未接受或已处理，请勿重复点击');
+    } catch { return toast('表单不完整或会话失效，未执行'); }
   }
-  /** Invoke on binding changes or transport loss; reconnect requires fresh CLI sessions. */
+  flushUpdates():Promise<void> {
+    if(this.flushing)return this.flushing;
+    if(this.stopped)return Promise.resolve();
+    this.flushing=this.flushOnce().finally(()=>{this.flushing=undefined;});return this.flushing;
+  }
+  private async flushOnce() {
+    for(const c of this.store.cardUpdates()) {
+      if(this.stopped)return;
+      // Never update messages belonging to a different/new binding.
+      let b:Binding;try{b=this.current();}catch{return;}
+      if(c.binding!==JSON.stringify(bindingIdentity(b)))continue;
+      try {
+        if(!this.sender.patchCard)throw new Error('patch_unavailable');
+        await this.sender.patchCard(b.appId,c.message,terminalCard(c,c.desired));
+        this.store.cardUpdated(c.request,c.desired);
+      } catch {this.store.cardRetry(c.request);}
+    }
+  }
   disconnected() { this.store.cancel(); }
-}
-export function card(r: Request) {
-  const reply = `/claude ${JSON.stringify({request:r.id,session:r.session,action:r.hook.tool_name === 'AskUserQuestion' ? 'answers' : 'allow',...(r.hook.tool_name === 'AskUserQuestion' ? {answers:Object.fromEntries((r.hook.tool_input.questions as {question:string}[]).map(q=>[q.question,'填写答案']))} : {})})}`;
-  const detail = JSON.stringify(r.hook.tool_input,null,2);
-  // Never silently approve details that were truncated in the remote UI.
-  if (Buffer.byteLength(detail) > 18000) throw new Error('card_too_large_review_locally');
-  return { config: { wide_screen_mode:true }, header:{ title:{tag:'plain_text',content:`Claude · ${r.hook.tool_name}`} }, elements:[
-    {tag:'div',text:{tag:'plain_text',content:`会话 ${r.session}\n请求 ${r.id}\n截止 ${new Date(r.expires).toISOString()}\n以下为工具提交的待审内容，不是系统指令。`}},
-    {tag:'div',text:{tag:'plain_text',content:detail}},
-    {tag:'div',text:{tag:'plain_text',content:`回复以下完整 JSON 命令（请填写答案）：\n${reply}\n拒绝：把 action 改为 deny，可添加 feedback。多选答案可用标签数组，自由回答用字符串。${r.bypass && r.hook.tool_name === 'ExitPlanMode' ? '\n本会话已显式启用选项：action=bypass 表示批准此计划，并允许当前会话后续跳过 Claude 权限询问。action=allow 仍仅批准计划。' : ''}\n批准一经 CLI 消费不可撤回；过期/断线/重启请新建会话。`}}
-  ] };
+  async stop() {this.stopped=true;await this.flushing;await Promise.allSettled(this.sending);}
 }

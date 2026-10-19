@@ -65,6 +65,10 @@ const wsIngress = new FeishuWebSocketIngress(apps, message => {
   }
   return media ? media.receiveAuthenticated(message) : bridge.receive(message);
 }, {
+  ...(approvalDirectory ? {cardAction: (app: typeof apps[number],data: unknown) => {
+    if(app.appId!==personal?.appId)return {};
+    return approvals?.receiveCardAuthenticated(data) ?? {toast:{type:'error',content:'审批服务尚未就绪'}};
+  }} : {}),
   mediaEnabled: imagesEnabled,
   network: feishuNetwork,
   notice: event => {

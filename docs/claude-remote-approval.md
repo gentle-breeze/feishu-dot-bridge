@@ -1,5 +1,7 @@
 # Claude Code 本人飞书远程审批
 
+当前交互已升级为按钮/表单回调，参见 [卡片回调使用与恢复说明](claude-card-callbacks.md)。下方启动与隔离约束仍适用；旧 JSON 回复流程已禁用。
+
 本功能为显式启用的 Bridge 扩展，提供 Claude Code CLI 的 PermissionRequest、AskUserQuestion（PreToolUse）和 ExitPlanMode 交互。默认不启用生产接入，不创建凭据、不修改全局 Claude 配置、不启动第二个飞书 WebSocket 消费者、不修改订阅或定时任务。
 
 ## 启动与本地模拟
@@ -28,7 +30,7 @@ mock 会输出卡片和 request/session UUID。把卡片中的 JSON 对象（不
 python3 scripts/claude-approval/launch.py --state-dir /tmp/my-private-approval --offer-session-bypass --prompt '先规划，等待我批准'
 ```
 
-该选项从 plan 开始，同时传 `--allow-dangerously-skip-permissions`。卡片提供 `action=bypass` 的文字说明，用户必须明确回复该动作。`action=allow` 仍只批准计划。只有 ExitPlanMode、输入 permission_mode=plan、该会话显式启用三者同时满足，才返回 `updatedPermissions: [{type:'setMode',mode:'bypassPermissions',destination:'session'}]`。原生启动风险确认留给用户在本机处理，不自动输入确认。退出会话后请重新启动；不使用 resume。平台/组织审批保持适用，本功能无法替代它们。
+该选项从 plan 开始，同时传 `--allow-dangerously-skip-permissions`。当前卡片只批准本次，不提供 bypass 动作；旧 JSON 回复也不再生效。该历史启动选项不代表卡片能切换模式。只有 ExitPlanMode、输入 permission_mode=plan、该会话显式启用三者同时满足，才返回 `updatedPermissions: [{type:'setMode',mode:'bypassPermissions',destination:'session'}]`。原生启动风险确认留给用户在本机处理，不自动输入确认。退出会话后请重新启动；不使用 resume。平台/组织审批保持适用，本功能无法替代它们。
 
 启动器仅写临时单次 settings，用 `--setting-sources ''` 不加载个人/项目 settings，避免已有 allow Hook 冲突；不写原有配置、不复制凭据。原有组织策略仍由 Claude 执行。若项目依赖额外 settings/MCP，应先审阅独立配置，不直接放开参数透传。
 
@@ -36,7 +38,7 @@ python3 scripts/claude-approval/launch.py --state-dir /tmp/my-private-approval -
 
 已提供默认关闭的生产入口：现有个人模式 Bridge 配置额外设置 `CLAUDE_APPROVAL_DIR=/absolute/private/state` 后，按原有入口 `node dist/src/main.js` 启动。仅支持已配置且独占的个人 WebSocket ingress；未绑定本人时拒绝启动扩展。该环境变量未设置时，原有行为保持不变。这里只交付代码，未修改生产环境变量或运行服务。
 
-`main.ts` 已接线本人回复路由、sender、绑定读取、WS 断线/恢复、关闭清理。`/claude ` 命令由扩展消费，不再流入 dot。当前状态反馈在调用返回值中，卡片不自动更新，用户应以 CLI 继续/拒绝为最终结果。Webhook 宿主接入需另行使用下述 API，不属于当前默认生产入口。
+`main.ts` 已接线卡片回调、sender、绑定读取、WS 断线/恢复、关闭清理。旧 `/claude ` 命令被消费但不能审批。卡片状态后台更新，工具执行结果以 CLI 为准。Webhook 宿主接入需另行使用下述 API，不属于当前默认生产入口。
 
 `src/claude-approval/host.ts` 导出 `startBoundApprovals`。宿主传现有 sender、owner 和读取**当前有效 Binding**的函数：
 
@@ -48,7 +50,9 @@ const approvals = await startBoundApprovals({
   binding: () => readCurrentPersonalBinding(),
   ttlMs: 120000,
 });
-// 在现有已认证 ingress 完成 decodeFeishu/decodeFeishuWebSocket 后，
+// 在现有官方 SDK dispatcher 的 card.action.trigger handler 中：
+// return approvals.receiveCardAuthenticated(flattenedAuthenticatedEvent);
+// 普通消息在已认证 ingress 完成 decodeFeishu/decodeFeishuWebSocket 后，
 // 在普通 dot 转发之前调用。解码器已经拒绝群聊和非用户消息。
 const result = approvals.receiveAuthenticated(message);
 if (result !== undefined) {
@@ -65,13 +69,9 @@ if (result !== undefined) {
 
 该模块没有公开接收任意身份 JSON 的 HTTP API。必须使用已有 Bridge 的签名/加密校验或官方认证 WebSocket dispatcher；`receiveAuthenticated` 不是认证机制本身。绑定固定为扩展启动时的 owner/app/tenant/openId/chatId/bindingId；绑定改变要关闭并重建扩展。定期绑定检查也会取消会话。
 
-当前交互形式为飞书卡片展示 + 本人私聊完整命令回复；**没有交互按钮回调端点**，不需要新增卡片 action callback 权限。多问题一次完整提交，防止部分答案与另一次请求混合。单选或自由回答用字符串，多选可用标签数组（转成实测官方逗号分隔格式）。拒绝可附 feedback：
+当前交互使用卡片按钮及表单，已替代复制 JSON 回复。权限只批准本次；问题统一提交；计划可填写修改意见后退回。原卡状态持久更新。具体配置、协议及限制见 [卡片回调说明](claude-card-callbacks.md)。
 
-```text
-/claude {"request":"卡片完整UUID","session":"卡片完整UUID","action":"deny","feedback":"请先补充验证步骤"}
-```
-
-生产需要现有应用机器人发送消息/卡片能力、接收本人私聊消息事件及当前个人绑定。配置样例位于 `examples/claude-approval/config.example.json`，是宿主配置清单，**不是自动加载的生产配置**；实际内置开关是 CLAUDE_APPROVAL_DIR。不需要提供或新增秘密。宿主接线尚未启用。main.ts 的可选扩展接线已与日志诊断回调整合，启用仍需单独配置；feishu-websocket.ts 与诊断模块未修改。
+生产需要现有应用机器人发送消息/卡片能力、接收本人私聊消息事件、新版 card.action.trigger 回调订阅及当前个人绑定。配置样例位于 `examples/claude-approval/config.example.json`，是宿主配置清单，**不是自动加载的生产配置**；实际内置开关是 CLAUDE_APPROVAL_DIR。不需要提供或新增秘密。宿主接线尚未启用。main.ts 的可选扩展接线已与日志诊断回调整合，启用仍需单独配置；feishu-websocket.ts 仅增加可选卡片 handler，诊断模块保持不变。
 
 ## 状态、安全与恢复
 
