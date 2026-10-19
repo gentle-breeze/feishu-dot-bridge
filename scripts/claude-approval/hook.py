@@ -7,6 +7,32 @@ import socket
 import sys
 import time
 import uuid
+import fcntl
+
+def check_cli_session(h):
+    """Pin resumed CLI identity once; approval lease always stays fresh."""
+    path = os.environ.get('CLAUDE_APPROVAL_IDENTITY_FILE')
+    if not path:
+        if h.get('session_id') != os.environ['CLAUDE_APPROVAL_SESSION']:
+            raise ValueError('session_mismatch')
+        return
+    incoming = h.get('session_id')
+    if not isinstance(incoming, str) or str(uuid.UUID(incoming)) != incoming.lower():
+        raise ValueError('invalid_cli_session')
+    # File lives in the launcher's private temporary directory. The same OS user
+    # is the existing trust boundary. Never create a missing identity file.
+    with open(path, 'r+', encoding='utf-8') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        identity = json.load(f)
+        if identity['session'] is None and h.get('hook_event_name') == 'SessionStart':
+            identity['session'] = incoming
+            f.seek(0)
+            json.dump(identity, f)
+            f.truncate()
+            f.flush()
+            os.fsync(f.fileno())
+        if identity['session'] != incoming:
+            raise ValueError('session_mismatch_or_unbound')
 
 class UnixHTTP(http.client.HTTPConnection):
     def __init__(self, path, timeout=3):
@@ -44,14 +70,16 @@ def main():
             raise ValueError('too_large')
         h = json.loads(raw)
         event = h.get('hook_event_name')
-        if event not in ('PreToolUse', 'PermissionRequest'):
+        if event not in ('SessionStart', 'PreToolUse', 'PermissionRequest'):
             raise ValueError('unsupported_event')
         session = os.environ['CLAUDE_APPROVAL_SESSION']
-        if h.get('session_id') != session:
-            raise ValueError('session_mismatch')
+        check_cli_session(h)
+        if event == 'SessionStart':
+            return {}
         path = os.environ['CLAUDE_APPROVAL_SOCKET']
         # Send only fields needed to decide, not transcript paths or environment.
         h = {k: h[k] for k in ('session_id','cwd','hook_event_name','tool_name','tool_input','tool_use_id','permission_mode') if k in h}
+        h['session_id'] = session
         h['invocation_id'] = str(uuid.uuid4())
         response = call(path, '/hook', h)
         if response.get('guard') is True:

@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Run the repository approval launcher with only five model settings imported."""
+import json
+import os
+from pathlib import Path
+import sys
+
+# Resolve the installed symlink before importing repository helpers.
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+from entry_options import parse
+
+MODEL_KEYS = {
+    'opus': 'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    'sonnet': 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'haiku': 'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+    'fable': 'ANTHROPIC_DEFAULT_FABLE_MODEL',
+    'subagent': 'CLAUDE_CODE_SUBAGENT_MODEL',
+}
+
+
+def prepare(argv):
+    a = parse(argv)
+    launch = ROOT / 'launch.py'
+    if not launch.is_file():
+        raise ValueError('Bridge scripts/claude-approval/launch.py is missing; reinstall from the repository')
+    env = dict(os.environ)
+    path = Path.home() / '.claude' / 'settings.json'
+    settings_env = {}
+    if path.exists():
+        try:
+            settings = json.loads(path.read_text(encoding='utf-8'))
+            settings_env = settings.get('env', {})
+            if not isinstance(settings_env, dict):
+                raise ValueError()
+        except (OSError, ValueError, AttributeError, UnicodeError):
+            raise ValueError('Cannot read ~/.claude/settings.json: invalid JSON/object or unreadable file') from None
+    for key in MODEL_KEYS.values():
+        if key not in env and key in settings_env:
+            env[key] = settings_env[key]
+        value = env.get(key)
+        if not isinstance(value, str) or not value.strip() or value != value.strip() or any(c.isspace() for c in value) or '\0' in value or value.startswith('-'):
+            raise ValueError('Missing or invalid required model mapping: ' + key)
+    # Pinned main aliases must resolve to concrete gateway IDs, not recurse to
+    # built-in Anthropic aliases. Subagents may use one of the mapped aliases.
+    aliases = set(MODEL_KEYS) - {'subagent'}
+    for name in aliases:
+        value = env[MODEL_KEYS[name]]
+        if value.lower() in aliases | {'default', 'best', 'opusplan'} or value.lower().startswith('claude-'):
+            raise ValueError('Required mapping must be a gateway model ID: ' + MODEL_KEYS[name])
+    allowed = aliases | {env[MODEL_KEYS[n]] for n in aliases}
+    sub = env[MODEL_KEYS['subagent']]
+    if sub not in allowed:
+        # A separately pinned non-Claude provider model is valid for subagents.
+        if sub.lower().startswith('claude-') or sub.lower() in {'default', 'best', 'opusplan', 'inherit'}:
+            raise ValueError('Invalid subagent gateway mapping: CLAUDE_CODE_SUBAGENT_MODEL')
+        allowed.add(sub)
+    selected = a.model if a.model is not None else env.get('ANTHROPIC_MODEL', env.get('ANTHROPIC_DEFAULT_MODEL', 'sonnet'))
+    if selected not in allowed:
+        raise ValueError('Selected model must be a mapped alias or an effective gateway model ID')
+    args = [sys.executable, str(launch), '--state-dir', str(Path.home() / '.claude-feishu-approval'), *argv]
+    if a.model is None:
+        args += ['--model', selected]
+    return args, env
+
+
+if __name__ == '__main__':
+    try:
+        args, env = prepare(sys.argv[1:])
+        os.execve(sys.executable, args, env)
+    except (ValueError, OSError) as error:
+        # Errors never include JSON content, model values, or credentials.
+        print('claude-feishu: ' + (str(error) if isinstance(error, ValueError) else 'Unable to execute approval launcher'), file=sys.stderr)
+        sys.exit(2)

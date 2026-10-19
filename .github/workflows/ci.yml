@@ -30,4 +30,4 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm run build:image-executor:macos
-      - run: node --test dist/test/skill-execution.test.js dist/test/scheduled-review.test.js dist/test/local-extensions.test.js dist/test/image-executor.test.js dist/test/media-image-integration.test.js dist/test/callback-policy.test.js dist/test/reaction-transport.test.js dist/test/claude-approval.test.js dist/test/claude-card-callbacks.test.js
+      - run: node --test dist/test/skill-execution.test.js dist/test/scheduled-review.test.js dist/test/local-extensions.test.js dist/test/image-executor.test.js dist/test/media-image-integration.test.js dist/test/callback-policy.test.js dist/test/reaction-transport.test.js dist/test/claude-approval.test.js dist/test/claude-card-callbacks.test.js dist/test/claude-entry.test.js
