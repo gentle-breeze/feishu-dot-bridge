@@ -34,7 +34,7 @@ export function card(r:Request) {
     elements.push({tag:'form',name:'approval_form',elements:fields},button('deny','拒绝回答'));
   } else if(r.hook.tool_name==='ExitPlanMode') {
     elements.push(button('allow','批准并保留普通审批'));
-    if(canOfferBypass(r))elements.push(text('可选：批准并进入本会话 bypass 将免除整个当前会话后续的普通权限确认，不只限于本计划内的操作。仍受组织和平台限制。停止 CLI 并以普通模式启动新会话可恢复；不是全局设置。'),button('bypass','批准并进入本会话 bypass'));
+    if(canOfferBypass(r))elements.push(text('可选：批准并进入本会话 bypass 将免除整个当前会话后续的普通权限确认，不只限于本计划内的操作。仍受组织和平台限制。停止 CLI 并以 --no-offer-session-bypass 启动新会话可恢复；不是全局设置。'),button('bypass','批准并进入本会话 bypass'));
     elements.push({tag:'form',name:'feedback_form',elements:[{tag:'input',name:'feedback',required:true,max_length:1000,input_type:'multiline_text',placeholder:plain('填写修改意见后退回计划')},button('deny','退回修改',true)]});
   } else elements.push(button('allow','允许本次'),button('deny','拒绝'));
   const result=base(`Claude · ${r.hook.tool_name}`,elements);

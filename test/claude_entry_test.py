@@ -128,7 +128,7 @@ class EntryTests(unittest.TestCase):
         self.assertIn('launch.py is missing',r.stderr)
     def test_closed_cli_grammar_both_entry_and_launcher(self):
         entry=self.fake_launch()
-        bad=[['--permission-mode','bypassPermissions'],['--permission-mode=bypassPermissions'],['--permission-m=bypassPermissions'],['--settings=x'],['--setting-sources=user'],['--setting-sour=user'],['--mcp-config=x'],['-p'],['-phello'],['-pc'],['--print=x'],['--pri'],['--','--settings=x'],['--dangerously-skip-permissions'],['--offer-session-bypass=true'],['--offer-session-byp'],['--state-dir=/tmp/other'],['--mod=opus'],['--plan=true'],['--continue=true'],['--session-id=not-uuid'],['--resume=--settings=x']]
+        bad=[['--permission-mode','bypassPermissions'],['--permission-mode=bypassPermissions'],['--permission-m=bypassPermissions'],['--settings=x'],['--setting-sources=user'],['--setting-sour=user'],['--mcp-config=x'],['-p'],['-phello'],['-pc'],['--print=x'],['--pri'],['--','--settings=x'],['--dangerously-skip-permissions'],['--offer-session-bypass=true'],['--offer-session-byp'],['--no-offer-session-bypass=true'],['--no-offer-session-byp'],['--offer-session-bypass','--no-offer-session-bypass'],['--state-dir=/tmp/other'],['--mod=opus'],['--plan=true'],['--continue=true'],['--session-id=not-uuid'],['--resume=--settings=x']]
         for args in bad:
             with self.subTest(args=args):
                 self.assertEqual(self.run_cmd([entry,*args]).returncode,2)
@@ -196,15 +196,17 @@ sys.exit(17)
         old=str(uuid.uuid4());self.env['FAKE_CLI_SESSION']=old
         leases=[]
         with self.broker() as messages:
-            for options in [[],['--plan'],['--offer-session-bypass'],['--resume',old],['--resume','name with spaces'],['--resume'],['--continue'],['--session-id',old]]:
+            for options in [[],['--plan'],['--offer-session-bypass'],['--no-offer-session-bypass'],['--no-offer-session-bypass','--plan'],['--no-offer-session-bypass','--continue'],['--resume',old],['--resume','name with spaces'],['--resume'],['--continue'],['--session-id',old]]:
                 with self.subTest(options=options):
                     r=self.run_cmd([SCRIPTS/'claude-feishu',*options,'--model','opus','--prompt=--settings=x'])
                     self.assertEqual(r.returncode,17,r.stderr)
                     data=json.loads(self.record.read_text());args=data['args']
                     leases.append(data['lease'])
                     self.assertEqual(data['cwd'],str(self.cwd))
-                    self.assertEqual(args[args.index('--permission-mode')+1],'plan' if '--plan' in options or '--offer-session-bypass' in options else 'manual')
-                    self.assertEqual('--allow-dangerously-skip-permissions' in args,'--offer-session-bypass' in options)
+                    offered = '--no-offer-session-bypass' not in options and '--resume' not in options and '--continue' not in options
+                    self.assertEqual(args[args.index('--permission-mode')+1],'plan' if '--plan' in options or offered else 'manual')
+                    self.assertEqual('--allow-dangerously-skip-permissions' in args,offered)
+                    self.assertEqual(next(data['bypass'] for path,data in reversed(messages) if path == '/register'),offered)
                     self.assertNotIn('--dangerously-skip-permissions',args)
                     self.assertEqual(args[-2:],['--','--settings=x'])
                     self.assertEqual(args[args.index('--setting-sources')+1],'')

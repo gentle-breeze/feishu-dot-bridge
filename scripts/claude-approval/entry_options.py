@@ -6,7 +6,9 @@ import uuid
 def parser(launcher=False):
     p = argparse.ArgumentParser(allow_abbrev=False)
     p.add_argument('--plan', action='store_true')
-    p.add_argument('--offer-session-bypass', action='store_true', help='Start a new plan session and offer an explicit session-wide bypass choice on its approval card')
+    offer = p.add_mutually_exclusive_group()
+    offer.add_argument('--offer-session-bypass', dest='offer_session_bypass', action='store_true', default=None, help='Offer a session-wide bypass choice on a new plan session (default for new sessions; never selects bypass)')
+    offer.add_argument('--no-offer-session-bypass', dest='offer_session_bypass', action='store_false', help='Hide the bypass choice and retain ordinary approval')
     p.add_argument('--prompt', default=None)
     p.add_argument('--model')
     group = p.add_mutually_exclusive_group()
@@ -26,6 +28,8 @@ def parse(argv, launcher=False):
     a = p.parse_args(argv)
     if a.offer_session_bypass and (a.resume is not None or a.continue_session):
         p.error('--offer-session-bypass requires a new session, not resume/continue')
+    if a.offer_session_bypass is None:
+        a.offer_session_bypass = a.resume is None and not a.continue_session
     if a.session_id:
         try:
             if str(uuid.UUID(a.session_id)) != a.session_id.lower():
