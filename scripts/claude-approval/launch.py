@@ -47,6 +47,7 @@ try:
             args += ['--model', a.model]
         if a.offer_session_bypass:
             args.append('--allow-dangerously-skip-permissions')
+            print('Plan session: bypass is only available, not yet selected. Choosing it on the plan card affects all subsequent ordinary permission checks in this session, not just planned operations. Organization/platform limits still apply. Complete any native risk confirmation yourself.', flush=True)
         if a.prompt is not None:
             args += ['--', a.prompt]
         env = dict(os.environ, CLAUDE_APPROVAL_SOCKET=sock, CLAUDE_APPROVAL_SESSION=session, CLAUDE_APPROVAL_IDENTITY_FILE=str(identity))

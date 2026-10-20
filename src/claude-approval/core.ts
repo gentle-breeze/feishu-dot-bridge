@@ -42,13 +42,14 @@ export class ApprovalStore {
   requestForCard(request: string): Request | undefined {
     const row=this.db.prepare('SELECT * FROM requests WHERE id=?').get(request);
     if(!row || !['pending','answered'].includes(String(row.state)))return undefined;
-    return {id:request,session:String(row.session),hook:hookSchema.parse(JSON.parse(String(row.hook))),expires:Number(row.expires),state:String(row.state),bypass:false};
+    const session=this.db.prepare('SELECT bypass FROM sessions WHERE id=?').get(row.session!);
+    return {id:request,session:String(row.session),hook:hookSchema.parse(JSON.parse(String(row.hook))),expires:Number(row.expires),state:String(row.state),bypass:session?.bypass===1};
   }
   reconcileCards() {
     this.db.prepare(`UPDATE approval_cards SET desired=CASE
       WHEN (SELECT state FROM requests WHERE id=request)='consumed' THEN desired
       WHEN (SELECT state FROM requests WHERE id=request)='cancelled' OR (SELECT expires FROM requests WHERE id=request)<=? OR session IN (SELECT id FROM sessions WHERE active=0 OR lease<=?) THEN 'expired'
-      WHEN (SELECT state FROM requests WHERE id=request)='answered' THEN CASE WHEN json_extract((SELECT answer FROM requests WHERE id=request),'$.action')='deny' THEN 'denied' ELSE 'approved' END
+      WHEN (SELECT state FROM requests WHERE id=request)='answered' THEN CASE json_extract((SELECT answer FROM requests WHERE id=request),'$.action') WHEN 'deny' THEN 'denied' WHEN 'bypass' THEN 'approved_bypass' ELSE 'approved' END
       ELSE desired END`).run(this.now(),this.now());
   }
   cardUpdates() { this.reconcileCards();return this.db.prepare("SELECT * FROM approval_cards WHERE desired!=applied AND nextAt<=? ORDER BY rowid LIMIT 20").all(this.now()) as unknown as CardRecord[]; }

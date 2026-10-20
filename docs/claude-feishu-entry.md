@@ -39,7 +39,7 @@ claude-feishu --plan --model opus --prompt '请先提出计划'
 
 ## 参数和恢复会话
 
-支持 `--plan`、`--prompt TEXT`、`--model MODEL`、`--resume [ID或名称或路径]`、`--continue`、`--session-id UUID`；支持带值参数的 `--name=value` 形式，值保持不变。裸 --resume 打开原生选择器。--resume 与 --continue 互斥；--session-id 仅用于新会话，不与恢复参数组合。prompt 最终位于 Claude 的 `--` 分隔符后，因此 `--prompt=--settings=x` 只是文本。
+支持 `--plan`、`--offer-session-bypass`、`--prompt TEXT`、`--model MODEL`、`--resume [ID或名称或路径]`、`--continue`、`--session-id UUID`；支持带值参数的 `--name=value` 形式，值保持不变。裸 --resume 打开原生选择器。--resume 与 --continue 互斥；--session-id 仅用于新会话，不与恢复参数组合。prompt 最终位于 Claude 的 `--` 分隔符后，因此 `--prompt=--settings=x` 只是文本。
 
 ```sh
 claude-feishu --resume '之前的会话名称'
@@ -47,9 +47,23 @@ claude-feishu --continue --prompt '继续处理'
 claude-feishu --session-id '550e8400-e29b-41d4-a716-446655440000'
 ```
 
-严格允许列表拒绝其他选项、缩写、短参数组合和 `--` 透传，包括 --permission-mode、--settings、--setting-sources、--mcp-config、-p/--print，以及各种等号形式。该入口不开放 bypass。底层 launch.py 仍有历史显式 bypass 开关，但不能通过 claude-feishu 传入。
+严格允许列表拒绝其他选项、缩写、短参数组合和 `--` 透传，包括 --permission-mode、--settings、--setting-sources、--mcp-config、-p/--print，以及各种等号形式。只有显式 `--offer-session-bypass` 可提供下述会话级选择，不能透传其他权限参数。
 
 恢复的是 Claude 对话，不是审批租约：每次启动创建新的随机审批 ID，旧卡片不能复用。临时私有身份文件由 SessionStart 固定实际 CLI session_id，后续 Hook 必须匹配，才映射到新的审批 ID。未收到 SessionStart、ID 错误、试图换绑、临时文件丢失均不给批准。文件在退出时删除。新会话可预绑定指定 UUID。运行中通过原生 /resume 切换到另一个会话会触发身份不匹配，应退出并从入口重新恢复。生命周期、断线和超时策略仍见 [审批说明](claude-remote-approval.md)。
+
+## 可选的计划批准模式
+
+默认启动与单独 `--plan` 都不显示 bypass 选项。若本人希望在计划审批时选择，可为一个**新会话**显式运行：
+
+```sh
+claude-feishu --offer-session-bypass --prompt '请先提出计划，等待我选择批准方式'
+```
+
+该开关从 plan 模式启动，只传 `--allow-dangerously-skip-permissions` 提供可用性，不直接进入 bypass。保留 CLI 原生风险确认，由本人在本机完成。不能与 `--resume` 或 `--continue` 组合，也不修改全局配置。
+
+ExitPlanMode 卡片提供“批准并保留普通审批”和“批准并进入本会话 bypass”。前者保持原批准协议，不返回权限更新；后者才返回 `setMode bypassPermissions`、`destination: session`，两者均保留原始 updatedInput。bypass 作用于整个当前会话后续普通权限检查，不局限于计划内操作；组织和平台限制仍适用，可能阻止模式切换。状态卡只显示“已请求本会话 bypass”，不能证明 CLI 实际切换成功。
+
+缺少启动开关、错误工具/模式、无效身份、过期或旧会话的 bypass 回调均拒绝。已消费批准无法远程撤回；要恢复普通审批，请停止该 CLI，并不带此开关启动新的普通会话。不要依赖恢复旧会话清除权限状态。真实会话与飞书点击尚未验证，本次测试只用假包装器和模拟回调。
 
 ## 验证与边界
 
