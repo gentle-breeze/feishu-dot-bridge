@@ -7,6 +7,7 @@ const text=(content:string)=>({tag:'markdown',content:escaped(content)});
 const base=(title:string,elements:unknown[])=>({schema:'2.0',config:{update_multi:true,enable_forward:false},header:{title:plain(title)},body:{elements}});
 const qsSchema=z.array(z.object({question:z.string(),header:z.string().optional(),multiSelect:z.boolean().optional(),options:z.array(z.object({label:z.string(),description:z.string().optional()}).passthrough())}).passthrough());
 const extra=(value:Record<string,unknown>,known:string[])=>Object.fromEntries(Object.entries(value).filter(([k])=>!known.includes(k)));
+export const canOfferBypass=(r:Request)=>r.bypass && r.hook.tool_name==='ExitPlanMode' && r.hook.hook_event_name==='PermissionRequest' && r.hook.permission_mode==='plan';
 export function card(r:Request) {
   const detail=JSON.stringify(r.hook.tool_input,null,2);
   if(Buffer.byteLength(detail)>18000)throw new Error('card_too_large_review_locally');
@@ -32,17 +33,20 @@ export function card(r:Request) {
     fields.push(button('answers','提交全部答案',true));
     elements.push({tag:'form',name:'approval_form',elements:fields},button('deny','拒绝回答'));
   } else if(r.hook.tool_name==='ExitPlanMode') {
-    elements.push(button('allow','批准计划（仅本次）'),{tag:'form',name:'feedback_form',elements:[{tag:'input',name:'feedback',required:true,max_length:1000,input_type:'multiline_text',placeholder:plain('填写修改意见后退回计划')},button('deny','退回修改',true)]});
+    elements.push(button('allow','批准并保留普通审批'));
+    if(canOfferBypass(r))elements.push(text('可选：批准并进入本会话 bypass 将免除整个当前会话后续的普通权限确认，不只限于本计划内的操作。仍受组织和平台限制。停止 CLI 并以普通模式启动新会话可恢复；不是全局设置。'),button('bypass','批准并进入本会话 bypass'));
+    elements.push({tag:'form',name:'feedback_form',elements:[{tag:'input',name:'feedback',required:true,max_length:1000,input_type:'multiline_text',placeholder:plain('填写修改意见后退回计划')},button('deny','退回修改',true)]});
   } else elements.push(button('allow','允许本次'),button('deny','拒绝'));
   const result=base(`Claude · ${r.hook.tool_name}`,elements);
   if(Buffer.byteLength(JSON.stringify(result))>28000)throw new Error('card_too_large_review_locally');
   return result;
 }
 export function terminalCard(c:Pick<CardRecord,'project'|'session'|'request'|'tool'>,status:string) {
-  const label=status==='approved'?'已批准':status==='denied'?'已拒绝':'已过期';
+  const label=status==='approved_bypass'?'已批准 · 已请求本会话 bypass':status==='approved'?'已批准':status==='denied'?'已拒绝':'已过期';
   return base(`Claude · ${label}`,[text(`项目目录：${c.project}\n会话：${c.session}\n请求：${c.request}\n请求摘要：${c.tool}\n状态：${label}`),text(status==='expired'?'请求已失效，请在新的有效会话重新发起。':'决定已记录；实际工具执行结果以 Claude CLI 为准。')]);
 }
-export function formAnswer(r:Request,action:'allow'|'deny'|'answers',form:Record<string,unknown>):Answer {
+export function formAnswer(r:Request,action:'allow'|'deny'|'answers'|'bypass',form:Record<string,unknown>):Answer {
+  if(action==='bypass') {if(!canOfferBypass(r))throw new Error('bypass_unavailable');return {action:'bypass'};}
   if(action==='deny') {
     if(r.hook.tool_name==='ExitPlanMode')return {action:'deny',feedback:z.string().trim().min(1).max(1000).parse(form.feedback)};
     return {action:'deny'};

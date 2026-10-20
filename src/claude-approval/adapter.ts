@@ -9,7 +9,7 @@ const callbackSchema=z.object({
   event_type:z.literal('card.action.trigger'),event_id:id,create_time:z.string().regex(/^\d{16}$/),app_id:id,tenant_key:id,
   operator:z.object({open_id:id,tenant_key:id}),host:z.literal('im_message'),
   context:z.object({open_message_id:id,open_chat_id:id}),
-  action:z.object({tag:z.literal('button'),name:z.string().optional(),value:z.object({kind:z.literal('claude_approval_v1'),request:z.string().uuid(),session:z.string().uuid(),action:z.enum(['allow','deny','answers'])}).strict(),form_value:z.record(z.string(),z.unknown()).optional()})
+  action:z.object({tag:z.literal('button'),name:z.string().optional(),value:z.object({kind:z.literal('claude_approval_v1'),request:z.string().uuid(),session:z.string().uuid(),action:z.enum(['allow','deny','answers','bypass'])}).strict(),form_value:z.record(z.string(),z.unknown()).optional()})
 });
 const toast=(content:string,ok=false)=>({toast:{type:ok?'success':'error',content}});
 /** ONLY call from the existing SDK dispatcher on the authenticated app WS.

@@ -15,11 +15,11 @@ function event(r:Request,action='allow',form:Record<string,unknown>={}) {
  return {event_type:'card.action.trigger',event_id:randomUUID(),create_time:String(Date.now()*1000),app_id:b.appId,tenant_key:b.tenantKey,operator:{open_id:b.openId,tenant_key:b.tenantKey},host:'im_message',context:{open_message_id:'om_'+r.id,open_chat_id:b.chatId},action:{tag:'button',name:'act_'+action,value:{kind:'claude_approval_v1',request:r.id,session:r.session,action},form_value:form}};
 }
 function envelope(e:ReturnType<typeof event>) { const {event_id,event_type,create_time,app_id,tenant_key,...rest}=e;return {schema:'2.0',header:{event_id,event_type,create_time,app_id,tenant_key},event:rest}; }
-function fixture(path=':memory:') {
+function fixture(path=':memory:',bypass=false) {
  let now=Date.now(),binding:Binding|undefined=b,fail=false;
  const logs:string[]=[],patches:{message:string;content:any}[]=[],sends:any[]=[];
  const s=new ApprovalStore(path,()=>now,(name,id)=>logs.push(JSON.stringify({name,id})));
- const session=randomUUID();s.register(session,false);
+ const session=randomUUID();s.register(session,bypass);
  const a=new BoundFeishuApproval(s,{async reply(){throw new Error('must not send text');},async sendCard(_app,chat,content,key){assert.equal(chat,b.chatId);sends.push(content);return 'om_'+key;},async patchCard(_app,message,content){if(fail)throw new Error('PRIVATE_NETWORK_ERROR');patches.push({message,content});}},()=>binding,'owner');
  async function create(tool='Write',input:Record<string,unknown>={file_path:'/tmp/fixture/output.txt',content:'SYNTHETIC'}) {const h:Hook={session_id:session,cwd:'/tmp/fixture/project',hook_event_name:tool==='AskUserQuestion'?'PreToolUse':'PermissionRequest',tool_name:tool,tool_input:input,invocation_id:randomUUID(),permission_mode:'plan'};const r=s.create(h,1000);await a.send(r);s.delivered(r.id);return r;}
  return {s,a,session,create,logs,patches,sends,advance:(ms:number)=>now+=ms,setFailure:(value:boolean)=>fail=value,setBinding:(value:Binding|undefined)=>binding=value};
@@ -104,4 +104,25 @@ test('flat checkers show descriptions once, submit all questions and retain extr
 
 test('tool execution and plan review keep full commands, paths and input values',async()=>{
  const f=fixture();try{for(const [tool,input] of [['Bash',{command:'ls /tmp/review',timeout:5000}],['Write',{file_path:'/tmp/output',content:'full file content'}],['ExitPlanMode',{plan:'review this plan',planFilePath:'/tmp/plan'}]] as const){const r=await f.create(tool,input);const c=card(r) as any;const rendered=c.body.elements.filter((x:any)=>x.tag==='markdown').map((x:any)=>x.content).join('\n');for(const value of Object.values(input))assert.ok(rendered.includes(String(value)));}}finally{await f.a.stop();f.s.close();}
+});
+
+test('explicit plan availability offers two choices; only bypass choice emits session mode update',async()=>{
+ const f=fixture(':memory:',true);try{
+ const input={plan:'SYNTHETIC PLAN',planFilePath:'/tmp/synthetic-plan',extra:'preserved'};
+ const normal=await f.create('ExitPlanMode',input);const ui=JSON.stringify(card(normal));assert.match(ui,/批准并保留普通审批/);assert.match(ui,/批准并进入本会话 bypass/);assert.match(ui,/整个当前会话/);assert.match(ui,/组织和平台/);
+ assert.ok(ok(f.a.receiveCard(event(normal,'allow'))));const regular=f.s.consume(normal.id,normal.session).result as any;assert.equal(regular.hookSpecificOutput.decision.updatedPermissions,undefined);assert.deepEqual(regular.hookSpecificOutput.decision.updatedInput,input);
+ const r=await f.create('ExitPlanMode',input);const e=event(r,'bypass');assert.ok(ok(f.a.receiveCard(e)));assert.ok(!ok(f.a.receiveCard(e)));await f.a.flushUpdates();assert.match(JSON.stringify(f.patches.at(-1)),/已请求本会话 bypass/);
+ const output=f.s.consume(r.id,r.session).result as any;assert.deepEqual(output.hookSpecificOutput.decision.updatedPermissions,[{type:'setMode',mode:'bypassPermissions',destination:'session'}]);assert.deepEqual(output.hookSpecificOutput.decision.updatedInput,input);assert.ok(!ok(f.a.receiveCard(event(r,'bypass'))));
+ const denied=await f.create('ExitPlanMode',input);assert.ok(ok(f.a.receiveCard(event(denied,'bypass'))));assert.ok(ok(f.a.receiveCard(event(denied,'deny',{feedback:'Not this plan'}))));assert.equal((f.s.consume(denied.id,denied.session).result as any).hookSpecificOutput.decision.behavior,'deny');
+ }finally{await f.a.stop();f.s.close();}
+});
+
+test('bypass callback cannot exceed launch availability, plan tool/mode, binding, expiry or session',async()=>{
+ const safe=fixture();const f=fixture(':memory:',true);try{
+ const unoffered=await safe.create('ExitPlanMode',{plan:'ordinary'});assert.ok(!JSON.stringify(card(unoffered)).includes('act_bypass'));assert.ok(!ok(safe.a.receiveCard(event(unoffered,'bypass'))));
+ const write=await f.create('Write');assert.ok(!JSON.stringify(card(write)).includes('act_bypass'));assert.ok(!ok(f.a.receiveCard(event(write,'bypass'))));
+ const r=await f.create('ExitPlanMode',{plan:'test'});for(const h of [{...r.hook,permission_mode:'default'},{...r.hook,hook_event_name:'PreToolUse' as const}]){assert.ok(!JSON.stringify(card({...r,hook:h})).includes('act_bypass'));assert.throws(()=>formAnswer({...r,hook:h},'bypass',{}));}
+ const e=event(r,'bypass');for(const bad of [{...e,operator:{...e.operator,open_id:'other'}},{...e,context:{...e.context,open_message_id:'wrong'}},{...e,action:{...e.action,value:{...e.action.value,session:randomUUID()}}},{...e,create_time:String((Date.now()-301000)*1000)}])assert.ok(!ok(f.a.receiveCard(bad)));
+ f.setBinding({...b,id:'changed'});assert.ok(!ok(f.a.receiveCard(e)));f.setBinding(b);f.advance(1001);assert.ok(!ok(f.a.receiveCard(e)));
+ }finally{await safe.a.stop();safe.s.close();await f.a.stop();f.s.close();}
 });
