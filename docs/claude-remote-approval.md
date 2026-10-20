@@ -34,7 +34,7 @@ python3 scripts/claude-approval/launch.py --state-dir /tmp/my-private-approval -
 
 该选项从 plan 开始，同时传 `--allow-dangerously-skip-permissions`。卡片分别提供普通批准与进入本会话 bypass 的选择；新会话默认提供后者，显式 `--no-offer-session-bypass` 才关闭入口。旧 JSON 回复不生效。只有本人点击 bypass 选项才请求切换；其影响整个会话后续普通权限检查，不仅限于计划内操作。只有 ExitPlanMode、输入 permission_mode=plan、该会话已启用选择入口三者同时满足，才返回 `updatedPermissions: [{type:'setMode',mode:'bypassPermissions',destination:'session'}]`。原生启动风险确认留给用户在本机处理，不自动输入确认。该开关拒绝与 resume/continue 组合。恢复普通审批时停止 CLI，使用 `--no-offer-session-bypass` 启动新会话。平台/组织审批保持适用，本功能无法替代它们；组织策略可使模式更新不生效，因此卡片只记录“已请求”。此卡片选择仅完成模拟验证，未运行新的真实 bypass 会话。
 
-启动器仅写临时单次 settings，用 `--setting-sources ''` 不加载个人/项目 settings，避免已有 allow Hook 冲突；不写原有配置、不复制凭据。原有组织策略仍由 Claude 执行。若项目依赖额外 settings/MCP，应先审阅独立配置，不直接放开参数透传。
+启动器写临时单次 settings，并按 [选择性合并规则](claude-selective-settings.md) 保留普通偏好、已核验 HUD 和限制性配置；用 `--setting-sources ''` 阻止原始配置再次混入，避免已有 allow Hook 冲突。不写原有配置、不复制凭据。原有组织策略仍由 Claude 执行。若项目依赖额外 settings/MCP，应先审阅独立配置，不直接放开参数透传。
 
 ## 接入现有 Bridge（待确认后部署）
 

@@ -186,6 +186,8 @@ def hook(event,sid):
  p=subprocess.run(shlex.split(cmd),input=json.dumps(h),text=True,capture_output=True)
  return json.loads(p.stdout)
 result['before']=hook('PreToolUse',cli)
+result['settings']=settings
+result['manifest']=json.loads(Path(args[args.index('--settings')+1]).with_name('settings-sources.json').read_text())
 result['start']=hook('SessionStart',cli)
 result['after']=hook('PreToolUse',cli)
 result['wrong']=hook('PreToolUse','00000000-0000-4000-8000-000000000001')
@@ -193,6 +195,7 @@ result['rebind']=hook('SessionStart','00000000-0000-4000-8000-000000000001')
 Path(os.environ['RECORD']).write_text(json.dumps(result))
 sys.exit(17)
 ''');wrapper.chmod(0o700)
+        self.config({'env':self.models,'theme':'dark','permissions':{'deny':['Read(./secret)'],'ask':['Bash'],'allow':['Write']},'skipDangerousModePermissionPrompt':True})
         old=str(uuid.uuid4());self.env['FAKE_CLI_SESSION']=old
         leases=[]
         with self.broker() as messages:
@@ -211,6 +214,11 @@ sys.exit(17)
                     self.assertEqual(args[-2:],['--','--settings=x'])
                     self.assertEqual(args[args.index('--setting-sources')+1],'')
                     self.assertEqual(args[args.index('--model')+1],'opus')
+                    self.assertEqual(data['settings']['theme'],'dark')
+                    self.assertEqual(data['settings']['permissions'],{'deny':['Read(./secret)'],'ask':['Bash']})
+                    self.assertFalse(data['settings']['skipDangerousModePermissionPrompt'])
+                    self.assertNotIn('env',data['settings'])
+                    self.assertEqual(data['manifest']['sources'][0]['scope'],'user')
                     self.assertEqual(data['start'],{})
                     self.assertEqual(data['after'],{})
                     self.assertEqual(data['wrong']['hookSpecificOutput']['permissionDecision'],'deny')
@@ -224,6 +232,18 @@ sys.exit(17)
                     messages.clear()
             self.assertEqual(len(set(leases)),len(leases))
             self.assertNotIn(old,leases)
+    def test_invalid_restrictions_stop_before_register_or_wrapper(self):
+        wrapper=self.bin/'claude-gptcc'
+        wrapper.write_text('#!'+sys.executable+'\nfrom pathlib import Path\nimport os\nPath(os.environ["RECORD"]).write_text("started")\n')
+        wrapper.chmod(0o700)
+        self.config({'env':self.models,'permissions':{'deny':'invalid'}})
+        with self.broker() as messages:
+            r=self.run_cmd([SCRIPTS/'claude-feishu'])
+        self.assertNotEqual(r.returncode,0)
+        self.assertIn('permissions.deny',r.stderr)
+        self.assertEqual(messages,[])
+        self.assertFalse(self.record.exists())
+
     def test_recovery_conflicts(self):
         for args in [['--offer-session-bypass','--resume'],['--offer-session-bypass','--continue'],['--resume','--continue'],['--session-id',str(uuid.uuid4()),'--resume'],['--session-id',str(uuid.uuid4()),'--continue']]:
             self.assertEqual(self.run_cmd([SCRIPTS/'claude-feishu',*args]).returncode,2)

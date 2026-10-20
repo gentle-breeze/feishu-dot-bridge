@@ -12,12 +12,19 @@ import uuid
 import sys
 from hook import call
 from entry_options import parse
+from selective_settings import build_settings
 
 a = parse(sys.argv[1:], launcher=True)
 sock = str(Path(a.state_dir).resolve() / 'approval.sock')
 wrapper = shutil.which('claude-gptcc')
 if not wrapper:
     sys.exit('Existing claude-gptcc wrapper is required; no setup/login is performed')
+hook = Path(__file__).with_name('hook.py').resolve()
+approval_hooks = {event: [{'matcher': '*', 'hooks': [{'type': 'command', 'command': shlex.quote(sys.executable) + ' ' + shlex.quote(str(hook)), 'timeout': 260}]}] for event in ('SessionStart', 'PreToolUse', 'PermissionRequest')}
+try:
+    settings, provenance = build_settings(approval_hooks)
+except ValueError as error:
+    sys.exit(str(error))
 session = str(uuid.uuid4())
 resuming = a.resume is not None or a.continue_session
 cli_session = None if resuming else (a.session_id or session)
@@ -28,14 +35,15 @@ except Exception:
 child = None
 try:
     with tempfile.TemporaryDirectory(prefix='claude-approval-') as temp:
-        hook = Path(__file__).with_name('hook.py').resolve()
         identity = Path(temp) / 'cli-session.json'
         identity.write_text(json.dumps({'session': cli_session}))
         identity.chmod(0o600)
-        settings = {'hooks': {event: [{'matcher': '*', 'hooks': [{'type': 'command', 'command': shlex.quote(sys.executable) + ' ' + shlex.quote(str(hook)), 'timeout': 260}]}] for event in ('SessionStart', 'PreToolUse', 'PermissionRequest')}}
         config = Path(temp) / 'settings.json'
         config.write_text(json.dumps(settings))
         config.chmod(0o600)
+        manifest = Path(temp) / 'settings-sources.json'
+        manifest.write_text(json.dumps(provenance))
+        manifest.chmod(0o600)
         args = [wrapper, '--setting-sources', '', '--permission-mode', 'plan' if a.plan or a.offer_session_bypass else 'manual', '--settings', str(config)]
         if cli_session:
             args += ['--session-id', cli_session]
