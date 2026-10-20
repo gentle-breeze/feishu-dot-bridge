@@ -96,7 +96,7 @@ open(${JSON.stringify(record)},'w').write(json.dumps(sys.argv[1:]))
 `,{mode:0o700});
  const service=await serveApprovals(join(dir,'state'),()=>({async send(){}}));
  try{for(const mode of [[],['--offer-session-bypass'],['--no-offer-session-bypass'],['--no-offer-session-bypass','--plan']]){
- await new Promise<void>((done,reject)=>{const child=spawn('/usr/bin/python3',[resolve('scripts/claude-approval/launch.py'),'--state-dir',join(dir,'state'),...mode],{env:{...process.env,PATH:dir+':'+process.env.PATH,PYTHONPYCACHEPREFIX:join(dir,'pycache')},stdio:'ignore'});child.on('error',reject);child.on('exit',code=>code===0?done():reject(new Error('launcher failed')));});
+ await new Promise<void>((done,reject)=>{const child=spawn('/usr/bin/python3',[resolve('scripts/claude-approval/launch.py'),'--state-dir',join(dir,'state'),...mode],{env:{...process.env,HOME:dir,CLAUDE_CONFIG_DIR:'',PATH:dir+':'+process.env.PATH,PYTHONPYCACHEPREFIX:join(dir,'pycache')},stdio:'ignore'});child.on('error',reject);child.on('exit',code=>code===0?done():reject(new Error('launcher failed')));});
  const args=JSON.parse(readFileSync(record,'utf8')) as string[];const offered=!mode.includes('--no-offer-session-bypass');assert.equal(args[args.indexOf('--permission-mode')+1],offered || mode.includes('--plan')?'plan':'manual');assert.equal(args.includes('--allow-dangerously-skip-permissions'),offered);assert.equal(args.includes('--dangerously-skip-permissions'),false);assert.equal(service.store.db.prepare('SELECT count(*) AS n FROM sessions WHERE active=1').get()!.n,0);
  }}finally{await service.close();rmSync(dir,{recursive:true,force:true});}
 });
